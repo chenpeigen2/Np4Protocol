@@ -10,6 +10,7 @@ type BootstrapMessage struct {
     TargetID  string     `json:"target_id,omitempty"`
     Nonce     []byte     `json:"nonce,omitempty"`
     Success   bool       `json:"success"`
+    Approved  bool       `json:"approved,omitempty"`
     Error     string     `json:"error,omitempty"`
     Peers     []PeerInfo `json:"peers,omitempty"`
 }

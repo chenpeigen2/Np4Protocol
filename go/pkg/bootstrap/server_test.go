@@ -206,3 +206,67 @@ func TestBootstrapListPeers(t *testing.T) {
 		t.Errorf("expected nodeB, got %s", respMsg.Peers[0].ID)
 	}
 }
+
+func TestBootstrapConnectRequest(t *testing.T) {
+	server, _ := NewBootstrapServer()
+	defer server.Stop()
+	server.Start("127.0.0.1:0")
+
+	tcp := transport.NewTCPTransport()
+
+	// Start mock Node B that handles connect_request
+	nodeBListener, _ := tcp.Listen("127.0.0.1:0")
+	defer nodeBListener.Close()
+	nodeBAddr := nodeBListener.Addr().String()
+
+	go func() {
+		conn, _ := nodeBListener.Accept()
+		defer conn.Close()
+		data, _ := conn.Read()
+		var reqMsg BootstrapMessage
+		Deserialize(data, &reqMsg)
+		// Approve the request
+		resp := BootstrapMessage{Type: "connect_response", Success: true, Approved: true}
+		respData, _ := Serialize(resp)
+		conn.Write(respData)
+	}()
+
+	// Register A
+	connA, _ := tcp.Connect(server.Addr())
+	defer connA.Close()
+	regA := BootstrapMessage{Type: "register", NodeID: "nodeA", Addr: "10.0.0.1:8080", PublicKey: []byte{0xAA}}
+	dataA, _ := Serialize(regA)
+	connA.Write(dataA)
+	time.Sleep(50 * time.Millisecond)
+
+	// Register B
+	connB, _ := tcp.Connect(server.Addr())
+	defer connB.Close()
+	regB := BootstrapMessage{Type: "register", NodeID: "nodeB", Addr: nodeBAddr, PublicKey: []byte{0xBB}}
+	dataB, _ := Serialize(regB)
+	connB.Write(dataB)
+	time.Sleep(50 * time.Millisecond)
+
+	// A requests connection to B (new connection)
+	tcp2 := transport.NewTCPTransport()
+	reqConn, _ := tcp2.Connect(server.Addr())
+	defer reqConn.Close()
+	reqMsg := BootstrapMessage{Type: "connect_request", NodeID: "nodeA", TargetID: "nodeB"}
+	reqData, _ := Serialize(reqMsg)
+	reqConn.Write(reqData)
+
+	respData, err := reqConn.Read()
+	if err != nil {
+		t.Fatal("no response")
+	}
+
+	var respMsg BootstrapMessage
+	Deserialize(respData, &respMsg)
+
+	if respMsg.Type != "connect_response" {
+		t.Errorf("expected connect_response, got %s", respMsg.Type)
+	}
+	if !respMsg.Approved {
+		t.Error("expected approved")
+	}
+}

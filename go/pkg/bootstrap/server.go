@@ -92,6 +92,8 @@ func (s *BootstrapServer) handleConn(conn transport.Conn) {
 			s.handleKeyExchangeRequest(conn, msg)
 		case "list_peers":
 			s.handleListPeers(conn, msg)
+		case "connect_request":
+			s.handleConnectRequest(conn, msg)
 		}
 	}
 }
@@ -195,6 +197,67 @@ func (s *BootstrapServer) handleKeyExchangeRequest(conn transport.Conn, msg Boot
 		Addr:      targetPeer.Addr,
 		PublicKey: targetResp.PublicKey,
 		Success:   true,
+	}
+	replyData, _ := Serialize(replyMsg)
+	conn.Write(replyData)
+}
+
+func (s *BootstrapServer) handleConnectRequest(conn transport.Conn, msg BootstrapMessage) {
+	s.mu.RLock()
+	targetPeer, ok := s.peers[msg.TargetID]
+	senderPeer, senderOk := s.peers[msg.NodeID]
+	s.mu.RUnlock()
+
+	if !ok || !senderOk {
+		resp := BootstrapMessage{Type: "connect_response", Success: false, Error: "peer not found"}
+		data, _ := Serialize(resp)
+		conn.Write(data)
+		return
+	}
+
+	// Connect to target and forward request
+	targetConn, err := s.transport.Connect(targetPeer.Addr)
+	if err != nil {
+		resp := BootstrapMessage{Type: "connect_response", Success: false, Error: "target unreachable"}
+		data, _ := Serialize(resp)
+		conn.Write(data)
+		return
+	}
+	defer targetConn.Close()
+
+	// Forward request with sender info
+	forwardMsg := BootstrapMessage{
+		Type:      "connect_request",
+		NodeID:    msg.NodeID,
+		Addr:      senderPeer.Addr,
+		PublicKey: senderPeer.PublicKey,
+	}
+	forwardData, _ := Serialize(forwardMsg)
+	targetConn.Write(forwardData)
+
+	// Read approval response
+	respData, err := targetConn.Read()
+	if err != nil {
+		resp := BootstrapMessage{Type: "connect_response", Success: false, Error: "target timeout"}
+		data, _ := Serialize(resp)
+		conn.Write(data)
+		return
+	}
+
+	var targetResp BootstrapMessage
+	if err := Deserialize(respData, &targetResp); err != nil {
+		resp := BootstrapMessage{Type: "connect_response", Success: false, Error: "invalid response"}
+		data, _ := Serialize(resp)
+		conn.Write(data)
+		return
+	}
+
+	// Forward approval to requester
+	replyMsg := BootstrapMessage{
+		Type:     "connect_response",
+		NodeID:   msg.TargetID,
+		Approved: targetResp.Approved,
+		Success:  true,
 	}
 	replyData, _ := Serialize(replyMsg)
 	conn.Write(replyData)
