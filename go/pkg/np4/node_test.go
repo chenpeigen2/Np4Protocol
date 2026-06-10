@@ -281,6 +281,64 @@ func TestNodeRequestConnect(t *testing.T) {
 	}
 }
 
+func TestFullDiscoveryApprovalFlow(t *testing.T) {
+	bs, _ := bootstrap.NewBootstrapServer()
+	defer bs.Stop()
+	bs.Start("127.0.0.1:0")
+
+	nodeA, _ := NewNode("127.0.0.1:0")
+	defer nodeA.Stop()
+	nodeA.Register(bs.Addr())
+
+	nodeB, _ := NewNode("127.0.0.1:0")
+	defer nodeB.Stop()
+	nodeB.Register(bs.Addr())
+
+	// A discovers peers
+	peers, err := nodeA.ListPeers(bs.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(peers) != 1 || peers[0].ID != nodeB.ID() {
+		t.Fatal("peer discovery failed")
+	}
+
+	// B approves connections
+	nodeB.OnApprovalRequest(func(info bootstrap.PeerInfo) bool {
+		return true
+	})
+
+	// A requests connection to B
+	approved, err := nodeA.RequestConnect(bs.Addr(), nodeB.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !approved {
+		t.Fatal("connection not approved")
+	}
+
+	// Exchange keys and send encrypted message
+	nodeA.ExchangeKeys(bs.Addr(), nodeB.ID())
+	nodeB.ExchangeKeys(bs.Addr(), nodeA.ID())
+
+	var received []byte
+	var mu sync.Mutex
+	nodeB.OnMessage(func(msg *message.Message) {
+		mu.Lock()
+		received = msg.Content
+		mu.Unlock()
+	})
+
+	nodeA.SendEncrypted(nodeB.ID(), []byte("approved message"))
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	if string(received) != "approved message" {
+		t.Errorf("expected 'approved message', got '%s'", string(received))
+	}
+	mu.Unlock()
+}
+
 func TestNodeRegister(t *testing.T) {
 	bs, err := bootstrap.NewBootstrapServer()
 	if err != nil {
