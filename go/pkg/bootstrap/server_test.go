@@ -153,3 +153,56 @@ func TestBootstrapServerKeyExchange(t *testing.T) {
 		t.Error("public key mismatch")
 	}
 }
+
+func TestBootstrapListPeers(t *testing.T) {
+	server, _ := NewBootstrapServer()
+	defer server.Stop()
+	server.Start("127.0.0.1:0")
+
+	tcp := transport.NewTCPTransport()
+
+	// Register node A
+	connA, _ := tcp.Connect(server.Addr())
+	defer connA.Close()
+	regA := BootstrapMessage{Type: "register", NodeID: "nodeA", Addr: "10.0.0.1:8080", PublicKey: []byte{0xAA}}
+	dataA, _ := Serialize(regA)
+	connA.Write(dataA)
+	time.Sleep(50 * time.Millisecond)
+
+	// Register node B
+	connB, _ := tcp.Connect(server.Addr())
+	defer connB.Close()
+	regB := BootstrapMessage{Type: "register", NodeID: "nodeB", Addr: "10.0.0.2:8080", PublicKey: []byte{0xBB}}
+	dataB, _ := Serialize(regB)
+	connB.Write(dataB)
+	time.Sleep(50 * time.Millisecond)
+
+	// Node A lists peers (new connection)
+	tcp2 := transport.NewTCPTransport()
+	listConn, _ := tcp2.Connect(server.Addr())
+	defer listConn.Close()
+	listMsg := BootstrapMessage{Type: "list_peers", NodeID: "nodeA"}
+	listData, _ := Serialize(listMsg)
+	listConn.Write(listData)
+
+	respData, err := listConn.Read()
+	if err != nil {
+		t.Fatal("no response")
+	}
+
+	var respMsg BootstrapMessage
+	Deserialize(respData, &respMsg)
+
+	if respMsg.Type != "list_peers" {
+		t.Errorf("expected list_peers, got %s", respMsg.Type)
+	}
+	if !respMsg.Success {
+		t.Error("expected success")
+	}
+	if len(respMsg.Peers) != 1 {
+		t.Errorf("expected 1 peer, got %d", len(respMsg.Peers))
+	}
+	if respMsg.Peers[0].ID != "nodeB" {
+		t.Errorf("expected nodeB, got %s", respMsg.Peers[0].ID)
+	}
+}

@@ -90,6 +90,8 @@ func (s *BootstrapServer) handleConn(conn transport.Conn) {
 			s.handleRegister(conn, msg)
 		case "key_exchange_request":
 			s.handleKeyExchangeRequest(conn, msg)
+		case "list_peers":
+			s.handleListPeers(conn, msg)
 		}
 	}
 }
@@ -111,6 +113,25 @@ func (s *BootstrapServer) handleRegister(conn transport.Conn, msg BootstrapMessa
 		Type:    "register",
 		Success: true,
 		Nonce:   nonce,
+	}
+	data, _ := Serialize(resp)
+	conn.Write(data)
+}
+
+func (s *BootstrapServer) handleListPeers(conn transport.Conn, msg BootstrapMessage) {
+	s.mu.RLock()
+	peers := make([]PeerInfo, 0)
+	for id, peer := range s.peers {
+		if id != msg.NodeID {
+			peers = append(peers, *peer)
+		}
+	}
+	s.mu.RUnlock()
+
+	resp := BootstrapMessage{
+		Type:    "list_peers",
+		Success: true,
+		Peers:   peers,
 	}
 	data, _ := Serialize(resp)
 	conn.Write(data)
