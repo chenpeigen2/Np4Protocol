@@ -424,8 +424,13 @@ func (n *Node) ListPeers(bootstrapAddr string) ([]bootstrap.PeerInfo, error) {
 		Type:   "list_peers",
 		NodeID: n.id,
 	}
-	data, _ := bootstrap.Serialize(msg)
-	conn.Write(data)
+	data, err := bootstrap.Serialize(msg)
+	if err != nil {
+		return nil, err
+	}
+	if err := conn.Write(data); err != nil {
+		return nil, err
+	}
 
 	respData, err := conn.Read()
 	if err != nil {
@@ -456,8 +461,13 @@ func (n *Node) RequestConnect(bootstrapAddr, peerID string) (bool, error) {
 		NodeID:   n.id,
 		TargetID: peerID,
 	}
-	data, _ := bootstrap.Serialize(reqMsg)
-	conn.Write(data)
+	data, err := bootstrap.Serialize(reqMsg)
+	if err != nil {
+		return false, err
+	}
+	if err := conn.Write(data); err != nil {
+		return false, err
+	}
 
 	respData, err := conn.Read()
 	if err != nil {

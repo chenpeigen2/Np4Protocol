@@ -5,6 +5,7 @@ import (
     "errors"
     "io"
     "net"
+    "time"
 )
 
 const MaxMessageSize = 1 * 1024 * 1024 // 1 MB
@@ -73,7 +74,7 @@ func NewTCPTransport() *TCPTransport {
 }
 
 func (t *TCPTransport) Connect(addr string) (Conn, error) {
-    conn, err := net.Dial("tcp", addr)
+    conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
     if err != nil {
         return nil, err
     }
