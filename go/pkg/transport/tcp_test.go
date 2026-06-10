@@ -37,6 +37,12 @@ func TestTCPConnectAndListen(t *testing.T) {
         if string(data) != "hello" {
             t.Errorf("expected 'hello', got '%s'", string(data))
         }
+
+        err = conn.Write([]byte("world"))
+        if err != nil {
+            t.Error(err)
+            return
+        }
     }()
 
     client, err := tcp.Connect(addr)
@@ -48,6 +54,15 @@ func TestTCPConnectAndListen(t *testing.T) {
     err = client.Write([]byte("hello"))
     if err != nil {
         t.Fatal(err)
+    }
+
+    data, err := client.Read()
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    if string(data) != "world" {
+        t.Fatalf("expected 'world', got '%s'", string(data))
     }
 
     wg.Wait()
