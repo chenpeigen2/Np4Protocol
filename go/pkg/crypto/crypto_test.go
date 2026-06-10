@@ -2,6 +2,7 @@ package crypto
 
 import (
     "bytes"
+    "crypto/rand"
     "testing"
 )
 
@@ -30,5 +31,32 @@ func TestX25519KeyExchange(t *testing.T) {
 
     if !bytes.Equal(aliceShared, bobShared) {
         t.Error("shared secrets do not match")
+    }
+}
+
+func TestChaCha20Poly1305EncryptDecrypt(t *testing.T) {
+    encryptor := NewChaCha20Encryptor()
+
+    key := make([]byte, 32)
+    rand.Read(key)
+
+    plaintext := []byte("Hello, Np4Protocol!")
+
+    ciphertext, err := encryptor.Encrypt(plaintext, key)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    if bytes.Equal(ciphertext, plaintext) {
+        t.Error("ciphertext should differ from plaintext")
+    }
+
+    decrypted, err := encryptor.Decrypt(ciphertext, key)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    if !bytes.Equal(decrypted, plaintext) {
+        t.Error("decrypted text should match original")
     }
 }
