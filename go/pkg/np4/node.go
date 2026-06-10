@@ -22,6 +22,11 @@ type PeerSession struct {
 	CreatedAt time.Time
 }
 
+type EncryptedMessage struct {
+	SenderID   string `json:"sender_id"`
+	Ciphertext []byte `json:"ciphertext"`
+}
+
 type Node struct {
 	id         string
 	transport  transport.Transport
@@ -111,6 +116,39 @@ func (n *Node) Send(destID string, content []byte) error {
 	if err != nil {
 		return err
 	}
+
+	return conn.Write(data)
+}
+
+func (n *Node) SendEncrypted(destID string, content []byte) error {
+	n.mu.RLock()
+	session, ok := n.peerKeys[destID]
+	n.mu.RUnlock()
+
+	if !ok {
+		return errors.New("no shared key with peer")
+	}
+
+	ciphertext, err := n.crypto.Encrypt(content, session.SharedKey)
+	if err != nil {
+		return err
+	}
+
+	encMsg := EncryptedMessage{
+		SenderID:   n.id,
+		Ciphertext: ciphertext,
+	}
+
+	data, err := json.Marshal(encMsg)
+	if err != nil {
+		return err
+	}
+
+	conn, err := n.transport.Connect(session.PeerAddr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
 
 	return conn.Write(data)
 }
@@ -212,6 +250,7 @@ func (n *Node) handleConn(conn transport.Conn) {
 		resp := bootstrap.BootstrapMessage{
 			Type:      "key_exchange_response",
 			NodeID:    n.id,
+			Addr:      n.listener.Addr().String(),
 			PublicKey: pubKey,
 			Success:   true,
 		}
@@ -220,12 +259,42 @@ func (n *Node) handleConn(conn transport.Conn) {
 		return
 	}
 
+	// Try encrypted message
+	var encMsg EncryptedMessage
+	if json.Unmarshal(data, &encMsg) == nil && encMsg.Ciphertext != nil {
+		n.handleEncryptedMessage(encMsg)
+		return
+	}
+
+	// Fall back to plain message
 	var msg message.Message
 	if err := json.Unmarshal(data, &msg); err != nil {
 		return
 	}
 
 	n.bus.Send(&msg)
+}
+
+func (n *Node) handleEncryptedMessage(encMsg EncryptedMessage) {
+	n.mu.RLock()
+	session, ok := n.peerKeys[encMsg.SenderID]
+	n.mu.RUnlock()
+
+	if !ok {
+		return // unknown sender, drop
+	}
+
+	plaintext, err := n.crypto.Decrypt(encMsg.Ciphertext, session.SharedKey)
+	if err != nil {
+		return // decryption failed, drop
+	}
+
+	msg := &message.Message{
+		Type:     message.TypeAsync,
+		SenderID: encMsg.SenderID,
+		Content:  plaintext,
+	}
+	n.bus.Send(msg)
 }
 
 func (n *Node) ExchangeKeys(bootstrapAddr, peerID string) error {

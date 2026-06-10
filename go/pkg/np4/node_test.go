@@ -103,6 +103,44 @@ func TestNodeExchangeKeys(t *testing.T) {
 	}
 }
 
+func TestNodeSendEncrypted(t *testing.T) {
+	bs, _ := bootstrap.NewBootstrapServer()
+	defer bs.Stop()
+	bs.Start("127.0.0.1:0")
+
+	nodeA, _ := NewNode("127.0.0.1:0")
+	defer nodeA.Stop()
+	nodeA.Register(bs.Addr())
+
+	nodeB, _ := NewNode("127.0.0.1:0")
+	defer nodeB.Stop()
+	nodeB.Register(bs.Addr())
+
+	nodeA.ExchangeKeys(bs.Addr(), nodeB.ID())
+	nodeB.ExchangeKeys(bs.Addr(), nodeA.ID())
+
+	var received []byte
+	var mu sync.Mutex
+	nodeB.OnMessage(func(msg *message.Message) {
+		mu.Lock()
+		received = msg.Content
+		mu.Unlock()
+	})
+
+	err := nodeA.SendEncrypted(nodeB.ID(), []byte("secret message"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	if string(received) != "secret message" {
+		t.Errorf("expected 'secret message', got '%s'", string(received))
+	}
+	mu.Unlock()
+}
+
 func TestNodeRegister(t *testing.T) {
 	bs, err := bootstrap.NewBootstrapServer()
 	if err != nil {
