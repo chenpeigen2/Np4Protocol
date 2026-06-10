@@ -74,19 +74,23 @@ func (s *BootstrapServer) acceptLoop() {
 func (s *BootstrapServer) handleConn(conn transport.Conn) {
 	defer conn.Close()
 
-	data, err := conn.Read()
-	if err != nil {
-		return
-	}
+	for {
+		data, err := conn.Read()
+		if err != nil {
+			return
+		}
 
-	var msg BootstrapMessage
-	if err := Deserialize(data, &msg); err != nil {
-		return
-	}
+		var msg BootstrapMessage
+		if err := Deserialize(data, &msg); err != nil {
+			return
+		}
 
-	switch msg.Type {
-	case "register":
-		s.handleRegister(conn, msg)
+		switch msg.Type {
+		case "register":
+			s.handleRegister(conn, msg)
+		case "key_exchange_request":
+			s.handleKeyExchangeRequest(conn, msg)
+		}
 	}
 }
 
@@ -110,4 +114,62 @@ func (s *BootstrapServer) handleRegister(conn transport.Conn, msg BootstrapMessa
 	}
 	data, _ := Serialize(resp)
 	conn.Write(data)
+}
+
+func (s *BootstrapServer) handleKeyExchangeRequest(conn transport.Conn, msg BootstrapMessage) {
+	s.mu.RLock()
+	targetPeer, ok := s.peers[msg.TargetID]
+	senderPeer, senderOk := s.peers[msg.NodeID]
+	s.mu.RUnlock()
+
+	if !ok || !senderOk {
+		resp := BootstrapMessage{Type: "key_exchange_response", Success: false, Error: "peer not found"}
+		data, _ := Serialize(resp)
+		conn.Write(data)
+		return
+	}
+
+	// Connect to target node and forward the request
+	targetConn, err := s.transport.Connect(targetPeer.Addr)
+	if err != nil {
+		resp := BootstrapMessage{Type: "key_exchange_response", Success: false, Error: "target unreachable"}
+		data, _ := Serialize(resp)
+		conn.Write(data)
+		return
+	}
+	defer targetConn.Close()
+
+	// Forward request to target with sender's public key
+	forwardMsg := BootstrapMessage{
+		Type:      "key_exchange_request",
+		NodeID:    msg.NodeID,
+		Addr:      senderPeer.Addr,
+		PublicKey: senderPeer.PublicKey,
+		TargetID:  msg.TargetID,
+	}
+	forwardData, _ := Serialize(forwardMsg)
+	targetConn.Write(forwardData)
+
+	// Read target's response (its public key)
+	respData, err := targetConn.Read()
+	if err != nil {
+		resp := BootstrapMessage{Type: "key_exchange_response", Success: false, Error: "target timeout"}
+		data, _ := Serialize(resp)
+		conn.Write(data)
+		return
+	}
+
+	var targetResp BootstrapMessage
+	Deserialize(respData, &targetResp)
+
+	// Forward target's public key back to requester
+	replyMsg := BootstrapMessage{
+		Type:      "key_exchange_response",
+		NodeID:    msg.TargetID,
+		Addr:      targetPeer.Addr,
+		PublicKey: targetResp.PublicKey,
+		Success:   true,
+	}
+	replyData, _ := Serialize(replyMsg)
+	conn.Write(replyData)
 }
