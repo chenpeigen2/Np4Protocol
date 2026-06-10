@@ -1,0 +1,53 @@
+syntax = "proto3";
+package np4;
+
+option go_package = "Np4Protocol/go/pkg/proto";
+
+message Envelope {
+  bytes  payload    = 1;
+  bytes  signature  = 2;
+  Header header     = 3;
+}
+
+message Header {
+  MessageType type       = 1;
+  bytes       dest_id    = 2;
+  bytes       sender_id  = 3;
+  uint64      timestamp  = 4;
+  uint32      ttl        = 5;
+  uint32      version    = 6;
+}
+
+enum MessageType {
+  ASYNC_MSG      = 0;
+  SYNC_REQUEST   = 1;
+  SYNC_RESPONSE  = 2;
+  BROADCAST      = 3;
+  FILE_CHUNK     = 4;
+  MIX_CTRL       = 5;
+  KEY_EXCHANGE   = 6;
+  PEER_DISCOVERY = 7;
+}
+
+message Payload {
+  bytes  content      = 1;
+  bytes  session_key  = 2;
+  uint32 hop_count    = 3;
+  bytes  next_hop     = 4;
+}
+
+message MixBatch {
+  uint64            batch_id   = 1;
+  repeated Envelope messages   = 2;
+  bytes             proof      = 3;
+}
+
+enum ErrorCode {
+  OK                = 0;
+  INVALID_FORMAT    = 1;
+  DECRYPT_FAILED    = 2;
+  KEY_MISMATCH      = 3;
+  TTL_EXPIRED       = 4;
+  BATCH_FULL        = 5;
+  UNKNOWN_NODE      = 6;
+}
