@@ -2,9 +2,12 @@ package transport
 
 import (
     "encoding/binary"
+    "errors"
     "io"
     "net"
 )
+
+const MaxMessageSize = 1 * 1024 * 1024 // 1 MB
 
 type TCPConn struct {
     conn net.Conn
@@ -15,6 +18,10 @@ func (c *TCPConn) Read() ([]byte, error) {
     err := binary.Read(c.conn, binary.BigEndian, &length)
     if err != nil {
         return nil, err
+    }
+
+    if length > MaxMessageSize {
+        return nil, errors.New("message too large")
     }
 
     data := make([]byte, length)

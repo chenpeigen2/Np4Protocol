@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"sync"
 	"time"
 )
 
@@ -23,6 +24,7 @@ type Node struct {
 	bus       *message.MessageBus
 	listener  transport.Listener
 	stopCh    chan struct{}
+	stopOnce  sync.Once
 }
 
 func NewNode(listenAddr string) (*Node, error) {
@@ -101,8 +103,10 @@ func (n *Node) Send(destID string, content []byte) error {
 }
 
 func (n *Node) Stop() {
-	close(n.stopCh)
-	n.listener.Close()
+	n.stopOnce.Do(func() {
+		close(n.stopCh)
+		n.listener.Close()
+	})
 }
 
 func (n *Node) acceptLoop() {
