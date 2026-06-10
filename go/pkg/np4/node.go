@@ -36,7 +36,7 @@ type Node struct {
 	peerKeys   map[string]*PeerSession
 	stopCh     chan struct{}
 	stopOnce   sync.Once
-	mu         sync.Mutex
+	mu         sync.RWMutex
 }
 
 func NewNode(listenAddr string) (*Node, error) {
@@ -182,12 +182,120 @@ func (n *Node) handleConn(conn transport.Conn) {
 		return
 	}
 
+	// Try to detect bootstrap messages by checking the "type" field
+	var probe struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(data, &probe) == nil && probe.Type == "key_exchange_request" {
+		var bsMsg bootstrap.BootstrapMessage
+		if bootstrap.Deserialize(data, &bsMsg) != nil {
+			return
+		}
+		n.mu.RLock()
+		pubKey := n.publicKey
+		privKey := n.privateKey
+		n.mu.RUnlock()
+
+		// Compute shared secret with requester
+		sharedKey, err := n.keyExch.ComputeSharedSecret(privKey, bsMsg.PublicKey)
+		if err == nil {
+			n.mu.Lock()
+			n.peerKeys[bsMsg.NodeID] = &PeerSession{
+				PeerID:    bsMsg.NodeID,
+				PeerAddr:  bsMsg.Addr,
+				SharedKey: sharedKey,
+				CreatedAt: time.Now(),
+			}
+			n.mu.Unlock()
+		}
+
+		resp := bootstrap.BootstrapMessage{
+			Type:      "key_exchange_response",
+			NodeID:    n.id,
+			PublicKey: pubKey,
+			Success:   true,
+		}
+		respData, _ := bootstrap.Serialize(resp)
+		conn.Write(respData)
+		return
+	}
+
 	var msg message.Message
 	if err := json.Unmarshal(data, &msg); err != nil {
 		return
 	}
 
 	n.bus.Send(&msg)
+}
+
+func (n *Node) ExchangeKeys(bootstrapAddr, peerID string) error {
+	conn, err := n.transport.Connect(bootstrapAddr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	n.mu.RLock()
+	pubKey := n.publicKey
+	n.mu.RUnlock()
+
+	reqMsg := bootstrap.BootstrapMessage{
+		Type:      "key_exchange_request",
+		NodeID:    n.id,
+		TargetID:  peerID,
+		PublicKey: pubKey,
+	}
+
+	data, err := bootstrap.Serialize(reqMsg)
+	if err != nil {
+		return err
+	}
+	if err := conn.Write(data); err != nil {
+		return err
+	}
+
+	// Read response with peer's public key
+	respData, err := conn.Read()
+	if err != nil {
+		return err
+	}
+
+	var respMsg bootstrap.BootstrapMessage
+	if err := bootstrap.Deserialize(respData, &respMsg); err != nil {
+		return err
+	}
+
+	if !respMsg.Success {
+		return errors.New("key exchange failed: " + respMsg.Error)
+	}
+
+	// Compute shared secret
+	n.mu.RLock()
+	privKey := n.privateKey
+	n.mu.RUnlock()
+
+	sharedKey, err := n.keyExch.ComputeSharedSecret(privKey, respMsg.PublicKey)
+	if err != nil {
+		return err
+	}
+
+	n.mu.Lock()
+	n.peerKeys[peerID] = &PeerSession{
+		PeerID:    peerID,
+		PeerAddr:  respMsg.Addr,
+		SharedKey: sharedKey,
+		CreatedAt: time.Now(),
+	}
+	n.mu.Unlock()
+
+	return nil
+}
+
+func (n *Node) GetPeerSession(peerID string) (*PeerSession, bool) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	session, ok := n.peerKeys[peerID]
+	return session, ok
 }
 
 func (n *Node) sendBatch(batch []*message.Message) {
