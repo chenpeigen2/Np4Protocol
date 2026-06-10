@@ -372,6 +372,37 @@ func (n *Node) ExchangeKeys(bootstrapAddr, peerID string) error {
 	return nil
 }
 
+func (n *Node) ListPeers(bootstrapAddr string) ([]bootstrap.PeerInfo, error) {
+	conn, err := n.transport.Connect(bootstrapAddr)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	msg := bootstrap.BootstrapMessage{
+		Type:   "list_peers",
+		NodeID: n.id,
+	}
+	data, _ := bootstrap.Serialize(msg)
+	conn.Write(data)
+
+	respData, err := conn.Read()
+	if err != nil {
+		return nil, err
+	}
+
+	var resp bootstrap.BootstrapMessage
+	if err := bootstrap.Deserialize(respData, &resp); err != nil {
+		return nil, err
+	}
+
+	if !resp.Success {
+		return nil, errors.New("list peers failed: " + resp.Error)
+	}
+
+	return resp.Peers, nil
+}
+
 func (n *Node) GetPeerSession(peerID string) (*PeerSession, bool) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()

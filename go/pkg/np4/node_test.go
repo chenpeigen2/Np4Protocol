@@ -227,6 +227,32 @@ func TestFullP2PKeyExchangeFlow(t *testing.T) {
 	mu.Unlock()
 }
 
+func TestNodeListPeers(t *testing.T) {
+	bs, _ := bootstrap.NewBootstrapServer()
+	defer bs.Stop()
+	bs.Start("127.0.0.1:0")
+
+	nodeA, _ := NewNode("127.0.0.1:0")
+	defer nodeA.Stop()
+	nodeA.Register(bs.Addr())
+
+	nodeB, _ := NewNode("127.0.0.1:0")
+	defer nodeB.Stop()
+	nodeB.Register(bs.Addr())
+
+	peers, err := nodeA.ListPeers(bs.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(peers) != 1 {
+		t.Errorf("expected 1 peer, got %d", len(peers))
+	}
+	if peers[0].ID != nodeB.ID() {
+		t.Errorf("expected %s, got %s", nodeB.ID(), peers[0].ID)
+	}
+}
+
 func TestNodeRegister(t *testing.T) {
 	bs, err := bootstrap.NewBootstrapServer()
 	if err != nil {
