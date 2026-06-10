@@ -1,6 +1,7 @@
 package np4
 
 import (
+	"Np4Protocol/go/pkg/bootstrap"
 	"Np4Protocol/go/pkg/crypto"
 	"Np4Protocol/go/pkg/message"
 	"Np4Protocol/go/pkg/mix"
@@ -14,17 +15,28 @@ import (
 	"time"
 )
 
+type PeerSession struct {
+	PeerID    string
+	PeerAddr  string
+	SharedKey []byte
+	CreatedAt time.Time
+}
+
 type Node struct {
-	id        string
-	transport transport.Transport
-	crypto    *crypto.ChaCha20Encryptor
-	keyExch   *crypto.X25519KeyExchange
-	router    *router.Router
-	mixEngine *mix.MixEngine[message.Message]
-	bus       *message.MessageBus
-	listener  transport.Listener
-	stopCh    chan struct{}
-	stopOnce  sync.Once
+	id         string
+	transport  transport.Transport
+	crypto     *crypto.ChaCha20Encryptor
+	keyExch    *crypto.X25519KeyExchange
+	router     *router.Router
+	mixEngine  *mix.MixEngine[message.Message]
+	bus        *message.MessageBus
+	listener   transport.Listener
+	publicKey  []byte
+	privateKey []byte
+	peerKeys   map[string]*PeerSession
+	stopCh     chan struct{}
+	stopOnce   sync.Once
+	mu         sync.Mutex
 }
 
 func NewNode(listenAddr string) (*Node, error) {
@@ -49,6 +61,7 @@ func NewNode(listenAddr string) (*Node, error) {
 		router:    router.NewRouter(),
 		bus:       message.NewMessageBus(),
 		listener:  listener,
+		peerKeys:  make(map[string]*PeerSession),
 		stopCh:    make(chan struct{}),
 	}
 
@@ -107,6 +120,41 @@ func (n *Node) Stop() {
 		close(n.stopCh)
 		n.listener.Close()
 	})
+}
+
+func (n *Node) Register(bootstrapAddr string) error {
+	conn, err := n.transport.Connect(bootstrapAddr)
+	if err != nil {
+		return err
+	}
+
+	pubKey, privKey, err := n.keyExch.GenerateKeyPair()
+	if err != nil {
+		conn.Close()
+		return err
+	}
+
+	n.mu.Lock()
+	n.publicKey = pubKey
+	n.privateKey = privKey
+	n.mu.Unlock()
+
+	msg := bootstrap.BootstrapMessage{
+		Type:      "register",
+		NodeID:    n.id,
+		Addr:      n.listener.Addr().String(),
+		PublicKey: pubKey,
+	}
+
+	data, err := bootstrap.Serialize(msg)
+	if err != nil {
+		conn.Close()
+		return err
+	}
+
+	conn.Write(data)
+	conn.Close()
+	return nil
 }
 
 func (n *Node) acceptLoop() {

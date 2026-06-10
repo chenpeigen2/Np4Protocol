@@ -1,6 +1,7 @@
 package np4
 
 import (
+	"Np4Protocol/go/pkg/bootstrap"
 	"Np4Protocol/go/pkg/message"
 	"sync"
 	"testing"
@@ -43,4 +44,30 @@ func TestNodeCommunication(t *testing.T) {
 		t.Errorf("expected 'hello from node1', got '%s'", string(received))
 	}
 	mu.Unlock()
+}
+
+func TestNodeRegister(t *testing.T) {
+	bs, err := bootstrap.NewBootstrapServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bs.Stop()
+	bs.Start("127.0.0.1:0")
+
+	node, err := NewNode("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer node.Stop()
+
+	err = node.Register(bs.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	if bs.PeerCount() != 1 {
+		t.Errorf("expected 1 peer, got %d", bs.PeerCount())
+	}
 }
