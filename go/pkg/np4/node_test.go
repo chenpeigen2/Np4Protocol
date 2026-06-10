@@ -253,6 +253,34 @@ func TestNodeListPeers(t *testing.T) {
 	}
 }
 
+func TestNodeRequestConnect(t *testing.T) {
+	bs, _ := bootstrap.NewBootstrapServer()
+	defer bs.Stop()
+	bs.Start("127.0.0.1:0")
+
+	nodeA, _ := NewNode("127.0.0.1:0")
+	defer nodeA.Stop()
+	nodeA.Register(bs.Addr())
+
+	nodeB, _ := NewNode("127.0.0.1:0")
+	defer nodeB.Stop()
+	nodeB.Register(bs.Addr())
+
+	// B approves all requests
+	nodeB.OnApprovalRequest(func(info bootstrap.PeerInfo) bool {
+		return true
+	})
+
+	approved, err := nodeA.RequestConnect(bs.Addr(), nodeB.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !approved {
+		t.Error("expected approved")
+	}
+}
+
 func TestNodeRegister(t *testing.T) {
 	bs, err := bootstrap.NewBootstrapServer()
 	if err != nil {

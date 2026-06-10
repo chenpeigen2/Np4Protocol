@@ -38,10 +38,11 @@ type Node struct {
 	listener   transport.Listener
 	publicKey  []byte
 	privateKey []byte
-	peerKeys   map[string]*PeerSession
-	stopCh     chan struct{}
-	stopOnce   sync.Once
-	mu         sync.RWMutex
+	peerKeys        map[string]*PeerSession
+	approvalHandler func(bootstrap.PeerInfo) bool
+	stopCh          chan struct{}
+	stopOnce        sync.Once
+	mu              sync.RWMutex
 }
 
 func NewNode(listenAddr string) (*Node, error) {
@@ -91,6 +92,12 @@ func (n *Node) AddPeer(id, addr string) {
 
 func (n *Node) OnMessage(handler func(*message.Message)) {
 	n.bus.OnMessage(handler)
+}
+
+func (n *Node) OnApprovalRequest(handler func(bootstrap.PeerInfo) bool) {
+	n.mu.Lock()
+	n.approvalHandler = handler
+	n.mu.Unlock()
 }
 
 func (n *Node) Send(destID string, content []byte) error {
@@ -227,48 +234,54 @@ func (n *Node) handleConn(conn transport.Conn) {
 	var probe struct {
 		Type string `json:"type"`
 	}
-	if json.Unmarshal(data, &probe) == nil && probe.Type == "key_exchange_request" {
-		var bsMsg bootstrap.BootstrapMessage
-		if bootstrap.Deserialize(data, &bsMsg) != nil {
-			return
-		}
-		n.mu.RLock()
-		pubKey := n.publicKey
-		privKey := n.privateKey
-		n.mu.RUnlock()
+	if json.Unmarshal(data, &probe) == nil {
+		switch probe.Type {
+		case "key_exchange_request":
+			var bsMsg bootstrap.BootstrapMessage
+			if bootstrap.Deserialize(data, &bsMsg) != nil {
+				return
+			}
+			n.mu.RLock()
+			pubKey := n.publicKey
+			privKey := n.privateKey
+			n.mu.RUnlock()
 
-		// Compute shared secret with requester
-		sharedKey, err := n.keyExch.ComputeSharedSecret(privKey, bsMsg.PublicKey)
-		if err != nil {
+			// Compute shared secret with requester
+			sharedKey, err := n.keyExch.ComputeSharedSecret(privKey, bsMsg.PublicKey)
+			if err != nil {
+				resp := bootstrap.BootstrapMessage{
+					Type:    "key_exchange_response",
+					Success: false,
+					Error:   err.Error(),
+				}
+				respData, _ := bootstrap.Serialize(resp)
+				conn.Write(respData)
+				return
+			}
+
+			n.mu.Lock()
+			n.peerKeys[bsMsg.NodeID] = &PeerSession{
+				PeerID:    bsMsg.NodeID,
+				PeerAddr:  bsMsg.Addr,
+				SharedKey: sharedKey,
+				CreatedAt: time.Now(),
+			}
+			n.mu.Unlock()
+
 			resp := bootstrap.BootstrapMessage{
-				Type:    "key_exchange_response",
-				Success: false,
-				Error:   err.Error(),
+				Type:      "key_exchange_response",
+				NodeID:    n.id,
+				Addr:      n.listener.Addr().String(),
+				PublicKey: pubKey,
+				Success:   true,
 			}
 			respData, _ := bootstrap.Serialize(resp)
 			conn.Write(respData)
 			return
+		case "connect_request":
+			n.handleConnectRequest(conn, data)
+			return
 		}
-
-		n.mu.Lock()
-		n.peerKeys[bsMsg.NodeID] = &PeerSession{
-			PeerID:    bsMsg.NodeID,
-			PeerAddr:  bsMsg.Addr,
-			SharedKey: sharedKey,
-			CreatedAt: time.Now(),
-		}
-		n.mu.Unlock()
-
-		resp := bootstrap.BootstrapMessage{
-			Type:      "key_exchange_response",
-			NodeID:    n.id,
-			Addr:      n.listener.Addr().String(),
-			PublicKey: pubKey,
-			Success:   true,
-		}
-		respData, _ := bootstrap.Serialize(resp)
-		conn.Write(respData)
-		return
 	}
 
 	// Try encrypted message
@@ -285,6 +298,34 @@ func (n *Node) handleConn(conn transport.Conn) {
 	}
 
 	n.bus.Send(&msg)
+}
+
+func (n *Node) handleConnectRequest(conn transport.Conn, data []byte) {
+	var reqMsg bootstrap.BootstrapMessage
+	if bootstrap.Deserialize(data, &reqMsg) != nil {
+		return
+	}
+
+	approved := false
+	n.mu.RLock()
+	handler := n.approvalHandler
+	n.mu.RUnlock()
+
+	if handler != nil {
+		approved = handler(bootstrap.PeerInfo{
+			ID:        reqMsg.NodeID,
+			Addr:      reqMsg.Addr,
+			PublicKey: reqMsg.PublicKey,
+		})
+	}
+
+	resp := bootstrap.BootstrapMessage{
+		Type:     "connect_response",
+		Approved: approved,
+		Success:  true,
+	}
+	respData, _ := bootstrap.Serialize(resp)
+	conn.Write(respData)
 }
 
 func (n *Node) handleEncryptedMessage(encMsg EncryptedMessage) {
@@ -401,6 +442,38 @@ func (n *Node) ListPeers(bootstrapAddr string) ([]bootstrap.PeerInfo, error) {
 	}
 
 	return resp.Peers, nil
+}
+
+func (n *Node) RequestConnect(bootstrapAddr, peerID string) (bool, error) {
+	conn, err := n.transport.Connect(bootstrapAddr)
+	if err != nil {
+		return false, err
+	}
+	defer conn.Close()
+
+	reqMsg := bootstrap.BootstrapMessage{
+		Type:     "connect_request",
+		NodeID:   n.id,
+		TargetID: peerID,
+	}
+	data, _ := bootstrap.Serialize(reqMsg)
+	conn.Write(data)
+
+	respData, err := conn.Read()
+	if err != nil {
+		return false, err
+	}
+
+	var resp bootstrap.BootstrapMessage
+	if err := bootstrap.Deserialize(respData, &resp); err != nil {
+		return false, err
+	}
+
+	if !resp.Success {
+		return false, errors.New("connect request failed: " + resp.Error)
+	}
+
+	return resp.Approved, nil
 }
 
 func (n *Node) GetPeerSession(peerID string) (*PeerSession, bool) {
