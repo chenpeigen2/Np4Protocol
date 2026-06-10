@@ -190,7 +190,10 @@ func (n *Node) Register(bootstrapAddr string) error {
 		return err
 	}
 
-	conn.Write(data)
+	if err := conn.Write(data); err != nil {
+		conn.Close()
+		return err
+	}
 	conn.Close()
 	return nil
 }
@@ -236,16 +239,25 @@ func (n *Node) handleConn(conn transport.Conn) {
 
 		// Compute shared secret with requester
 		sharedKey, err := n.keyExch.ComputeSharedSecret(privKey, bsMsg.PublicKey)
-		if err == nil {
-			n.mu.Lock()
-			n.peerKeys[bsMsg.NodeID] = &PeerSession{
-				PeerID:    bsMsg.NodeID,
-				PeerAddr:  bsMsg.Addr,
-				SharedKey: sharedKey,
-				CreatedAt: time.Now(),
+		if err != nil {
+			resp := bootstrap.BootstrapMessage{
+				Type:    "key_exchange_response",
+				Success: false,
+				Error:   err.Error(),
 			}
-			n.mu.Unlock()
+			respData, _ := bootstrap.Serialize(resp)
+			conn.Write(respData)
+			return
 		}
+
+		n.mu.Lock()
+		n.peerKeys[bsMsg.NodeID] = &PeerSession{
+			PeerID:    bsMsg.NodeID,
+			PeerAddr:  bsMsg.Addr,
+			SharedKey: sharedKey,
+			CreatedAt: time.Now(),
+		}
+		n.mu.Unlock()
 
 		resp := bootstrap.BootstrapMessage{
 			Type:      "key_exchange_response",

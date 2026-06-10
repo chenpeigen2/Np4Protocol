@@ -160,7 +160,12 @@ func (s *BootstrapServer) handleKeyExchangeRequest(conn transport.Conn, msg Boot
 	}
 
 	var targetResp BootstrapMessage
-	Deserialize(respData, &targetResp)
+	if err := Deserialize(respData, &targetResp); err != nil {
+		resp := BootstrapMessage{Type: "key_exchange_response", Success: false, Error: "invalid target response"}
+		data, _ := Serialize(resp)
+		conn.Write(data)
+		return
+	}
 
 	// Forward target's public key back to requester
 	replyMsg := BootstrapMessage{
