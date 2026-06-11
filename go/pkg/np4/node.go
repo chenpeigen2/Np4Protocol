@@ -6,9 +6,11 @@ import (
 	"Np4Protocol/go/pkg/p2p"
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -22,6 +24,7 @@ type Node struct {
 	host      host.Host
 	bus       *message.MessageBus
 	mixEngine *mix.MixEngine[message.Message]
+	dht       *dht.IpfsDHT
 	stopCh    chan struct{}
 	stopOnce  sync.Once
 }
@@ -42,6 +45,26 @@ func NewNode(port int) (*Node, error) {
 
 	// Register stream handler for incoming messages
 	h.SetStreamHandler(Np4MessageProtocol, n.handleStream)
+
+	return n, nil
+}
+
+func NewNodeWithBootstrap(port int, bootstrapPeers []peer.AddrInfo, rendezvous string) (*Node, error) {
+	n, err := NewNode(port)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx := context.Background()
+	kademliaDHT, err := p2p.StartDHT(ctx, n.host, bootstrapPeers)
+	if err != nil {
+		n.Stop()
+		return nil, err
+	}
+	n.dht = kademliaDHT
+
+	// Advertise at rendezvous
+	p2p.AdvertiseRendezvous(ctx, kademliaDHT, rendezvous)
 
 	return n, nil
 }
@@ -91,6 +114,13 @@ func (n *Node) Send(destID peer.ID, content []byte) error {
 	}
 
 	return p2p.WriteMsg(s, data)
+}
+
+func (n *Node) FindPeers(ctx context.Context, rendezvous string) (<-chan peer.AddrInfo, error) {
+	if n.dht == nil {
+		return nil, errors.New("DHT not initialized")
+	}
+	return p2p.FindPeers(ctx, n.dht, rendezvous)
 }
 
 func (n *Node) Stop() {
