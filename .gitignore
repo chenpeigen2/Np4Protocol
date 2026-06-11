@@ -5,9 +5,9 @@
 *.so
 *.dylib
 bin/
-np4d
-np4cli
-bootstrap
+/np4d
+/np4cli
+/bootstrap
 go/bootstrap
 
 # Test binary
