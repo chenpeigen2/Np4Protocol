@@ -4,56 +4,84 @@ import (
 	"Np4Protocol/go/pkg/message"
 	"Np4Protocol/go/pkg/np4"
 	"bufio"
-	"flag"
 	"fmt"
-	"log"
 	"os"
 	"strings"
+
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
 )
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:8080", "MixNode address")
-	flag.Parse()
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: np4cli <listen-port>")
+		os.Exit(1)
+	}
 
-	node, err := np4.NewNode("127.0.0.1:0")
+	port := 0
+	fmt.Sscanf(os.Args[1], "%d", &port)
+
+	node, err := np4.NewNode(port)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintf(os.Stderr, "failed to create node: %v\n", err)
+		os.Exit(1)
 	}
 	defer node.Stop()
 
-	fmt.Printf("Np4Protocol CLI started\n")
-	fmt.Printf("Your Node ID: %s\n", node.ID())
+	fmt.Printf("Node ID: %s\n", node.ID())
+	fmt.Printf("Addresses: %v\n", node.Addrs())
 
 	node.OnMessage(func(msg *message.Message) {
-		fmt.Printf("\nReceived from %s: %s\n", msg.SenderID, string(msg.Content))
+		fmt.Printf("\n[%s]: %s\n> ", msg.SenderID, string(msg.Content))
 	})
 
-	_ = addr // reserved for future use: connecting to a remote MixNode
-
 	scanner := bufio.NewScanner(os.Stdin)
-	for {
+	fmt.Print("> ")
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			fmt.Print("> ")
+			continue
+		}
+
+		if strings.HasPrefix(line, "connect ") {
+			addr := strings.TrimPrefix(line, "connect ")
+			maddr, err := multiaddr.NewMultiaddr(addr)
+			if err != nil {
+				fmt.Printf("invalid address: %v\n", err)
+				fmt.Print("> ")
+				continue
+			}
+			info, err := peer.AddrInfoFromP2pAddr(maddr)
+			if err != nil {
+				fmt.Printf("invalid peer info: %v\n", err)
+				fmt.Print("> ")
+				continue
+			}
+			if err := node.Connect(info.Addrs, info.ID); err != nil {
+				fmt.Printf("connect failed: %v\n", err)
+			} else {
+				fmt.Printf("connected to %s\n", info.ID)
+			}
+		} else if strings.HasPrefix(line, "send ") {
+			parts := strings.SplitN(strings.TrimPrefix(line, "send "), " ", 2)
+			if len(parts) != 2 {
+				fmt.Println("Usage: send <peer-id> <message>")
+				fmt.Print("> ")
+				continue
+			}
+			pid, err := peer.Decode(parts[0])
+			if err != nil {
+				fmt.Printf("invalid peer ID: %v\n", err)
+				fmt.Print("> ")
+				continue
+			}
+			if err := node.Send(pid, []byte(parts[1])); err != nil {
+				fmt.Printf("send failed: %v\n", err)
+			}
+		} else {
+			fmt.Println("Commands: connect <multiaddr>, send <peer-id> <message>")
+		}
 		fmt.Print("> ")
-		if !scanner.Scan() {
-			break
-		}
-
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-
-		parts := strings.SplitN(input, " ", 2)
-		if len(parts) < 2 {
-			fmt.Println("Usage: <dest_id> <message>")
-			continue
-		}
-
-		destID := parts[0]
-		content := []byte(parts[1])
-
-		err := node.Send(destID, content)
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-		}
 	}
 }
