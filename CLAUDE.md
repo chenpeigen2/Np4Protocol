@@ -16,8 +16,8 @@ cd go
 go test ./...
 
 # Run tests for a specific package
-go test ./pkg/crypto/ -v
-go test ./pkg/transport/ -v -run TestTCPConnectAndListen
+go test ./pkg/p2p/ -v
+go test ./pkg/np4/ -v -run TestNodeSendReceive
 
 # Build CLI tools
 go build -o bin/np4d ./cmd/np4d/
@@ -29,29 +29,30 @@ protoc --go_out=. --go_opt=paths=source_relative ../proto/np4.proto
 
 ## Architecture
 
-Four-layer protocol stack, each in its own package under `go/pkg/`:
+Three-layer protocol stack using libp2p for P2P networking:
 
 ```
 Application  →  np4/node.go (wires everything together)
      ↓
 Anonymous    →  mix/engine.go (batch shuffle with Fisher-Yates)
      ↓
-Crypto       →  crypto/x25519.go + chacha20.go (X25519 key exchange, ChaCha20-Poly1305)
-     ↓
-Transport    →  transport/tcp.go (length-prefixed TCP framing)
+P2P Network  →  p2p/host.go + stream.go + discovery.go (go-libp2p)
 ```
 
+libp2p provides transport (TCP), security (Noise: X25519 + ChaCha20-Poly1305), stream multiplexing (yamux), and peer discovery (mDNS) out of the box.
+
 Supporting packages:
-- `router/` - Node discovery and random peer selection
+- `p2p/` - libp2p Host wrapper, stream helpers (length-prefixed framing), mDNS discovery
 - `message/` - Pub/sub message bus with async handler dispatch
 - `proto/` - Generated protobuf types (not yet used in runtime; app uses JSON-serialized `message.Message`)
 
 ## Key Design Decisions
 
+- **libp2p** handles all transport, encryption, and peer discovery (Noise security = X25519 + ChaCha20-Poly1305)
 - **MixEngine** is generic (`MixEngine[T]`) and uses timer-based flush for partial batches
-- **TCP framing**: 4-byte big-endian length header + payload, 1MB max message size
-- **Thread safety**: `sync.RWMutex` in Router and MessageBus, `sync.Mutex` in MixEngine, `sync.Once` for Node.Stop()
-- **Crypto**: Nonce (12 bytes) prepended to ciphertext in ChaCha20-Poly1305
+- **Stream framing**: 4-byte big-endian length header + payload, 1MB max message size
+- **Thread safety**: `sync.Mutex` in MixEngine, `sync.Once` for Node.Stop()
+- **Protocol ID**: `/np4/message/1.0.0` for message streams
 
 ## Protobuf
 
@@ -62,4 +63,4 @@ Key types: `Envelope`, `Header`, `Payload`, `MixBatch`, `MessageType`, `ErrorCod
 
 ## Current State
 
-Prototype/MVP. The mix engine is wired into Node but `Send()` bypasses it (direct TCP). Protobuf types are generated but runtime uses JSON. No TLS on transport layer yet.
+Prototype/MVP. The mix engine is wired into Node but `Send()` bypasses it (direct stream). Protobuf types are generated but runtime uses JSON. libp2p Noise provides encrypted transport.
