@@ -26,7 +26,10 @@ func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 		n.handler(pi)
 	}
 	if n.found != nil {
-		n.found <- pi.ID
+		select {
+		case n.found <- pi.ID:
+		default:
+		}
 	}
 }
 

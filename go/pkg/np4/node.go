@@ -25,6 +25,8 @@ type Node struct {
 	bus       *message.MessageBus
 	mixEngine *mix.MixEngine[message.Message]
 	dht       *dht.IpfsDHT
+	ctx       context.Context
+	cancel    context.CancelFunc
 	stopCh    chan struct{}
 	stopOnce  sync.Once
 }
@@ -55,7 +57,10 @@ func NewNodeWithBootstrap(port int, bootstrapPeers []peer.AddrInfo, rendezvous s
 		return nil, err
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	n.ctx = ctx
+	n.cancel = cancel
+
 	kademliaDHT, err := p2p.StartDHT(ctx, n.host, bootstrapPeers)
 	if err != nil {
 		n.Stop()
@@ -104,6 +109,7 @@ func (n *Node) Send(destID peer.ID, content []byte) error {
 
 	msg := &message.Message{
 		Type:     message.TypeAsync,
+		DestID:   destID.String(),
 		SenderID: n.host.ID().String(),
 		Content:  content,
 	}
@@ -126,6 +132,12 @@ func (n *Node) FindPeers(ctx context.Context, rendezvous string) (<-chan peer.Ad
 func (n *Node) Stop() {
 	n.stopOnce.Do(func() {
 		close(n.stopCh)
+		if n.cancel != nil {
+			n.cancel()
+		}
+		if n.dht != nil {
+			n.dht.Close()
+		}
 		n.host.Close()
 	})
 }

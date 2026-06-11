@@ -19,7 +19,10 @@ func main() {
 	}
 
 	port := 0
-	fmt.Sscanf(os.Args[1], "%d", &port)
+	if n, _ := fmt.Sscanf(os.Args[1], "%d", &port); n != 1 {
+		fmt.Fprintf(os.Stderr, "invalid port: %s\n", os.Args[1])
+		os.Exit(1)
+	}
 
 	node, err := np4.NewNode(port)
 	if err != nil {

@@ -25,11 +25,12 @@ func main() {
 
 	// Start DHT - this node becomes a DHT bootstrap peer
 	ctx := context.Background()
-	_, err = dht.New(ctx, h, dht.Mode(dht.ModeServer))
+	dhtInstance, err := dht.New(ctx, h, dht.Mode(dht.ModeServer))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create DHT: %v\n", err)
 		os.Exit(1)
 	}
+	defer dhtInstance.Close()
 
 	fmt.Println("Bootstrap node started")
 	fmt.Printf("Peer ID: %s\n", h.ID())
