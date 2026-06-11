@@ -84,3 +84,44 @@ func TestNodeBidirectional(t *testing.T) {
 	}
 	mu.Unlock()
 }
+
+func TestFullP2PFlow(t *testing.T) {
+	nodeA, _ := NewNode(0)
+	defer nodeA.Stop()
+	nodeB, _ := NewNode(0)
+	defer nodeB.Stop()
+	nodeC, _ := NewNode(0)
+	defer nodeC.Stop()
+
+	nodeA.Connect(nodeB.Host().Addrs(), nodeB.ID())
+	nodeA.Connect(nodeC.Host().Addrs(), nodeC.ID())
+	nodeB.Connect(nodeC.Host().Addrs(), nodeC.ID())
+
+	var receivedB, receivedC []byte
+	var mu sync.Mutex
+
+	nodeB.OnMessage(func(msg *message.Message) {
+		mu.Lock()
+		receivedB = msg.Content
+		mu.Unlock()
+	})
+	nodeC.OnMessage(func(msg *message.Message) {
+		mu.Lock()
+		receivedC = msg.Content
+		mu.Unlock()
+	})
+
+	nodeA.Send(nodeB.ID(), []byte("hello B"))
+	nodeA.Send(nodeC.ID(), []byte("hello C"))
+
+	time.Sleep(300 * time.Millisecond)
+
+	mu.Lock()
+	if string(receivedB) != "hello B" {
+		t.Errorf("B expected 'hello B', got '%s'", string(receivedB))
+	}
+	if string(receivedC) != "hello C" {
+		t.Errorf("C expected 'hello C', got '%s'", string(receivedC))
+	}
+	mu.Unlock()
+}
