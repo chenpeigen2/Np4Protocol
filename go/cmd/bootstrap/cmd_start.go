@@ -72,6 +72,10 @@ var startCmd = &cobra.Command{
 func startGinServer(h host.Host, dhtInstance *dht.IpfsDHT) {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
+	r.Use(func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Next()
+	})
 
 	// Serve embedded static files
 	webFS, _ := fs.Sub(webFiles, "web")
