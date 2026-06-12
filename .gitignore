@@ -9,6 +9,8 @@ bin/
 /np4cli
 /bootstrap
 go/bootstrap
+go/np4cli
+go/np4d
 
 # Test binary
 *.test
