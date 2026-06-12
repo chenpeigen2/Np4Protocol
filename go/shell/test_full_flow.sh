@@ -42,7 +42,7 @@ else
     exit 1
 fi
 
-BOOTSTRAP_MULTIADDR=$("$BIN_DIR/bootstrap" id --port $BOOTSTRAP_PORT 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $2}')
+BOOTSTRAP_MULTIADDR=$("$BIN_DIR/bootstrap" id --port $BOOTSTRAP_PORT 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $1}')
 green "Bootstrap multiaddr: $BOOTSTRAP_MULTIADDR"
 
 # Step 2: 获取节点 A 的 Peer ID
@@ -51,7 +51,7 @@ echo "--- Step 2: 创建节点 A ---"
 NODE_A_ID=$("$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" id 2>&1 | grep "Peer ID:" | awk '{print $3}')
 green "节点 A Peer ID: $NODE_A_ID"
 
-NODE_A_MULTIADDR=$("$BIN_DIR/np4cli" --port $NODE_A_PORT id 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $2}')
+NODE_A_MULTIADDR=$("$BIN_DIR/np4cli" --port $NODE_A_PORT id 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $1}')
 green "节点 A multiaddr: $NODE_A_MULTIADDR"
 
 # Step 3: 获取节点 B 的 Peer ID
@@ -60,7 +60,7 @@ echo "--- Step 3: 创建节点 B ---"
 NODE_B_ID=$("$BIN_DIR/np4cli" --port $NODE_B_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" id 2>&1 | grep "Peer ID:" | awk '{print $3}')
 green "节点 B Peer ID: $NODE_B_ID"
 
-NODE_B_MULTIADDR=$("$BIN_DIR/np4cli" --port $NODE_B_PORT id 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $2}')
+NODE_B_MULTIADDR=$("$BIN_DIR/np4cli" --port $NODE_B_PORT id 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $1}')
 green "节点 B multiaddr: $NODE_B_MULTIADDR"
 
 # Step 4: 节点 A 连接节点 B

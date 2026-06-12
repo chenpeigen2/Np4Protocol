@@ -36,7 +36,7 @@ echo "--- 启动 Bootstrap ---"
 BOOTSTRAP_PID=$!
 sleep 2
 
-BOOTSTRAP_ADDR=$("$BIN_DIR/bootstrap" id --port $BOOTSTRAP_PORT 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $2}')
+BOOTSTRAP_ADDR=$("$BIN_DIR/bootstrap" id --port $BOOTSTRAP_PORT 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $1}')
 green "Bootstrap 地址: $BOOTSTRAP_ADDR"
 
 # Test 1: np4cli --help
@@ -90,7 +90,7 @@ fi
 # Test 6: connect 命令（连接自己测试格式）
 echo
 echo "--- connect 命令 ---"
-NODE_B_ADDR=$("$BIN_DIR/np4cli" --port $NODE_B_PORT id 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $2}')
+NODE_B_ADDR=$("$BIN_DIR/np4cli" --port $NODE_B_PORT id 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $1}')
 OUTPUT=$("$BIN_DIR/np4cli" --port $NODE_A_PORT connect "$NODE_B_ADDR" 2>&1)
 if echo "$OUTPUT" | grep -q "Connected"; then
     green "连接成功"
