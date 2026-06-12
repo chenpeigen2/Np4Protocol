@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Np4Protocol Bootstrap Node</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 {
+            font-size: 1.5rem;
+            color: #00ff88;
+            margin-bottom: 0.5rem;
+        }
+        .subtitle {
+            color: #666;
+            font-size: 0.85rem;
+            margin-bottom: 2rem;
+        }
+        .card {
+            background: #111;
+            border: 1px solid #222;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        .card h2 {
+            font-size: 0.85rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 1rem;
+        }
+        .status-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #1a1a1a;
+        }
+        .status-row:last-child { border-bottom: none; }
+        .label { color: #666; }
+        .value { color: #fff; font-family: monospace; }
+        .online { color: #00ff88; }
+        .peer-id {
+            font-family: monospace;
+            color: #00ff88;
+            word-break: break-all;
+            font-size: 0.9rem;
+        }
+        .addr-list {
+            list-style: none;
+            padding: 0;
+        }
+        .addr-list li {
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: #aaa;
+            padding: 0.3rem 0;
+            padding-left: 1rem;
+            position: relative;
+        }
+        .addr-list li::before {
+            content: '›';
+            position: absolute;
+            left: 0;
+            color: #00ff88;
+        }
+        .peer-card {
+            background: #0d0d0d;
+            border: 1px solid #1a1a1a;
+            border-radius: 6px;
+            padding: 1rem;
+            margin-top: 0.5rem;
+        }
+        .peer-card .peer-id { font-size: 0.8rem; color: #aaa; }
+        .empty { color: #444; font-style: italic; }
+        .refresh-btn {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            color: #00ff88;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+        .refresh-btn:hover { background: #222; }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+        .dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00ff88;
+            margin-right: 0.5rem;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1>Np4Protocol</h1>
+                <div class="subtitle">Bootstrap Node Dashboard</div>
+            </div>
+            <button class="refresh-btn" onclick="refresh()">Refresh</button>
+        </div>
+
+        <div class="card">
+            <h2>Node Status</h2>
+            <div class="status-row">
+                <span class="label">Status</span>
+                <span class="value"><span class="dot"></span><span id="status">loading...</span></span>
+            </div>
+            <div class="status-row">
+                <span class="label">Peer ID</span>
+                <span class="peer-id" id="peer-id">-</span>
+            </div>
+            <div class="status-row">
+                <span class="label">Uptime</span>
+                <span class="value" id="uptime">-</span>
+            </div>
+            <div class="status-row">
+                <span class="label">Connected Peers</span>
+                <span class="value" id="dht-peers">-</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Addresses</h2>
+            <ul class="addr-list" id="addresses">
+                <li class="empty">loading...</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h2>Peers (<span id="peer-count">0</span>)</h2>
+            <div id="peers">
+                <div class="empty">No peers connected</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = window.location.origin;
+
+        async function fetchStatus() {
+            try {
+                const res = await fetch(`${API}/api/status`);
+                const data = await res.json();
+                document.getElementById('status').textContent = data.status;
+                document.getElementById('peer-id').textContent = data.peer_id;
+                document.getElementById('uptime').textContent = data.uptime;
+                document.getElementById('dht-peers').textContent = data.dht_peers;
+
+                const addrList = document.getElementById('addresses');
+                addrList.innerHTML = data.addresses.map(a => `<li>${a}</li>`).join('');
+            } catch (e) {
+                document.getElementById('status').textContent = 'offline';
+            }
+        }
+
+        async function fetchPeers() {
+            try {
+                const res = await fetch(`${API}/api/peers`);
+                const peers = await res.json();
+                document.getElementById('peer-count').textContent = peers.length;
+
+                const container = document.getElementById('peers');
+                if (peers.length === 0) {
+                    container.innerHTML = '<div class="empty">No peers connected</div>';
+                    return;
+                }
+
+                container.innerHTML = peers.map(p => `
+                    <div class="peer-card">
+                        <div class="peer-id">${p.id}</div>
+                        <ul class="addr-list">
+                            ${p.addresses.map(a => `<li>${a}</li>`).join('')}
+                        </ul>
+                    </div>
+                `).join('');
+            } catch (e) {
+                document.getElementById('peers').innerHTML = '<div class="empty">Failed to load</div>';
+            }
+        }
+
+        function refresh() {
+            fetchStatus();
+            fetchPeers();
+        }
+
+        refresh();
+        setInterval(refresh, 5000);
+    </script>
+</body>
+</html>

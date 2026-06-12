@@ -3,14 +3,27 @@ package main
 import (
 	"Np4Protocol/go/pkg/p2p"
 	"context"
+	"embed"
 	"fmt"
+	"io/fs"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/spf13/cobra"
 )
+
+//go:embed web/*
+var webFiles embed.FS
+
+var webPort int
+
+var startTime time.Time
 
 var startCmd = &cobra.Command{
 	Use:   "start",
@@ -29,12 +42,20 @@ var startCmd = &cobra.Command{
 		}
 		defer dhtInstance.Close()
 
+		startTime = time.Now()
+
 		fmt.Println("Bootstrap node started")
 		fmt.Printf("Peer ID: %s\n", h.ID())
 		fmt.Println("Addresses:")
 		for _, addr := range h.Addrs() {
 			fmt.Printf("  %s/p2p/%s\n", addr, h.ID())
 		}
+
+		if webPort > 0 {
+			go startGinServer(h, dhtInstance)
+			fmt.Printf("Dashboard: http://localhost:%d\n", webPort)
+		}
+
 		fmt.Println()
 		fmt.Println("Use the multiaddr above with np4cli --bootstrap flag")
 		fmt.Println("Press Ctrl+C to stop")
@@ -48,6 +69,59 @@ var startCmd = &cobra.Command{
 	},
 }
 
+func startGinServer(h host.Host, dhtInstance *dht.IpfsDHT) {
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.Default()
+
+	// Serve embedded static files
+	webFS, _ := fs.Sub(webFiles, "web")
+	r.StaticFS("/static", http.FS(webFS))
+
+	r.GET("/", func(c *gin.Context) {
+		data, _ := webFiles.ReadFile("web/index.html")
+		c.Data(http.StatusOK, "text/html; charset=utf-8", data)
+	})
+
+	r.GET("/api/status", func(c *gin.Context) {
+		addrs := make([]string, len(h.Addrs()))
+		for i, addr := range h.Addrs() {
+			addrs[i] = addr.String() + "/p2p/" + h.ID().String()
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"peer_id":   h.ID().String(),
+			"addresses": addrs,
+			"uptime":    time.Since(startTime).Round(time.Second).String(),
+			"dht_peers": len(h.Peerstore().Peers()),
+			"status":    "online",
+		})
+	})
+
+	r.GET("/api/peers", func(c *gin.Context) {
+		peers := h.Peerstore().Peers()
+		peerList := make([]gin.H, 0, len(peers))
+		for _, pid := range peers {
+			if pid == h.ID() {
+				continue
+			}
+			addrs := h.Peerstore().Addrs(pid)
+			addrStrs := make([]string, len(addrs))
+			for i, addr := range addrs {
+				addrStrs[i] = addr.String()
+			}
+			peerList = append(peerList, gin.H{
+				"id":        pid.String(),
+				"addresses": addrStrs,
+			})
+		}
+
+		c.JSON(http.StatusOK, peerList)
+	})
+
+	r.Run(fmt.Sprintf(":%d", webPort))
+}
+
 func init() {
+	startCmd.Flags().IntVar(&webPort, "web", 8080, "Web dashboard port (0 to disable)")
 	rootCmd.AddCommand(startCmd)
 }
