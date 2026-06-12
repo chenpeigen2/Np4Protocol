@@ -1,110 +1,110 @@
 # np4cli
 
-Np4Protocol P2P anonymous communication client. Built on libp2p with Noise encryption (X25519 + ChaCha20-Poly1305) and DHT-based peer discovery.
+Np4Protocol P2P 匿名通信客户端。基于 libp2p，使用 Noise 协议加密（X25519 + ChaCha20-Poly1305），支持 DHT 节点发现。
 
-## Build
+## 构建
 
 ```bash
 cd go
 go build -o bin/np4cli ./cmd/np4cli/
 ```
 
-## Quick Start
+## 快速开始
 
-### 1. Start a bootstrap node
+### 1. 启动 bootstrap 节点
 
 ```bash
 go build -o bin/bootstrap ./cmd/bootstrap/
 ./bin/bootstrap -port 4000
-# Output:
+# 输出:
 # Bootstrap node started
 # Peer ID: 12D3KooW...
 # Addresses:
 #   /ip4/127.0.0.1/tcp/4000/p2p/12D3KooW...
 ```
 
-### 2. Start clients
+### 2. 启动客户端
 
 ```bash
-# Terminal A
+# 终端 A
 ./bin/np4cli --port 4002 --bootstrap /ip4/127.0.0.1/tcp/4000/p2p/12D3KooW... chat
 
-# Terminal B
+# 终端 B
 ./bin/np4cli --port 4003 --bootstrap /ip4/127.0.0.1/tcp/4000/p2p/12D3KooW... chat
 ```
 
-### 3. Discover and chat
+### 3. 发现节点并聊天
 
-In Terminal A:
+终端 A 中:
 ```
 > peers
   12D3KooW...  [/ip4/127.0.0.1/tcp/4003/...]
-1 peer(s) discovered
+发现 1 个节点
 
 > connect /ip4/127.0.0.1/tcp/4003/p2p/12D3KooW...
-Connected to 12D3KooW...
+已连接到 12D3KooW...
 
-> send 12D3KooW... hello from A
-Sent to 12D3KooW...
+> send 12D3KooW... 来自 A 的消息
+已发送到 12D3KooW...
 ```
 
-In Terminal B:
+终端 B 中:
 ```
-[14:32:01] 12D3KooW...: hello from A
+[14:32:01] 12D3KooW...: 来自 A 的消息
 >
 ```
 
-## Commands
+## 子命令
 
-### Subcommands
+| 命令 | 说明 |
+|------|------|
+| `np4cli id` | 显示本节点的 Peer ID 和地址 |
+| `np4cli peers` | 通过 DHT 发现在线节点 |
+| `np4cli connect <multiaddr>` | 连接到指定节点 |
+| `np4cli send <peer-id> <消息>` | 发送消息 |
+| `np4cli chat` | 进入交互式聊天模式 |
 
-| Command | Description |
-|---------|-------------|
-| `np4cli id` | Show this node's peer ID and addresses |
-| `np4cli peers` | Discover online peers via DHT |
-| `np4cli connect <multiaddr>` | Connect to a peer |
-| `np4cli send <peer-id> <message>` | Send a message to a peer |
-| `np4cli chat` | Enter interactive chat mode |
+## 全局参数
 
-### Global Flags
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--port` | `0`（随机） | TCP 监听端口 |
+| `--bootstrap` | 无 | Bootstrap 节点的 multiaddr（启用 DHT 发现） |
+| `--rendezvous` | `np4-network` | DHT rendezvous 字符串，用于节点发现 |
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--port` | `0` (random) | TCP listen port |
-| `--bootstrap` | | Bootstrap node multiaddr (enables DHT discovery) |
-| `--rendezvous` | `np4-network` | DHT rendezvous string for peer discovery |
+## 交互模式命令
 
-### Chat Mode Commands
+进入 `chat` 模式后可用的命令：
 
-| Command | Description |
-|---------|-------------|
-| `peers` | Discover online peers |
-| `connect <multiaddr>` | Connect to a peer |
-| `send <peer-id> <message>` | Send a message |
-| `id` | Show this node's info |
-| `help` | Show available commands |
-| `quit` / `exit` | Exit |
+| 命令 | 说明 |
+|------|------|
+| `peers` | 发现在线节点 |
+| `connect <multiaddr>` | 连接到节点 |
+| `send <peer-id> <消息>` | 发送消息 |
+| `id` | 显示本节点信息 |
+| `help` | 显示帮助 |
+| `quit` / `exit` | 退出 |
 
-## Architecture
+## 架构
 
 ```
 np4cli (cobra CLI)
   └── np4.Node
-        ├── libp2p Host (TCP + Noise encryption)
-        ├── Kademlia DHT (peer discovery)
-        ├── Stream handler (/np4/message/1.0.0)
-        └── MessageBus (pub/sub message dispatch)
+        ├── libp2p Host（TCP + Noise 加密）
+        ├── Kademlia DHT（节点发现）
+        ├── Stream 处理器（/np4/message/1.0.0）
+        └── MessageBus（消息发布/订阅）
 ```
 
-All connections are encrypted via libp2p's Noise protocol (X25519 key exchange + ChaCha20-Poly1305). Peer discovery uses Kademlia DHT with a rendezvous string.
+所有连接通过 libp2p 的 Noise 协议自动加密（X25519 密钥交换 + ChaCha20-Poly1305）。节点发现使用 Kademlia DHT，通过 rendezvous 字符串标识同一网络。
 
-## Multiaddr Format
+## Multiaddr 格式
 
-libp2p uses multiaddr to represent network addresses:
+libp2p 使用 multiaddr 表示网络地址：
 
 ```
 /ip4/127.0.0.1/tcp/4000/p2p/12D3KooW...
-└─ IP ─┘          └port┘    └─ peer ID ─┘
+└─ IP ─┘          └端口┘    └─ Peer ID ─┘
 ```
 
-The `id` command prints your full multiaddrs. Use these for the `connect` command and `--bootstrap` flag.
+`id` 命令会输出完整的 multiaddr，用于 `connect` 命令和 `--bootstrap` 参数。
