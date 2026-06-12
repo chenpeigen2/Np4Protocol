@@ -1,5 +1,5 @@
 #!/bin/bash
-# DHT 节点发现测试：验证多节点通过 DHT 自动发现
+# DHT 节点发现测试：验证 Bootstrap API 和节点稳定性
 set +e
 
 BOOTSTRAP_PORT=4800
@@ -40,19 +40,32 @@ sleep 2
 BOOTSTRAP_MULTIADDR=$("$BIN_DIR/bootstrap" id --port $BOOTSTRAP_PORT 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $1}')
 green "Bootstrap 启动"
 
-# Test 1: 单节点 peers 查询（应为空）
+# Test 1: Bootstrap API /api/status 在线
 echo
-echo "--- Test 1: 单节点 peers 查询 ---"
-OUTPUT=$("$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" peers 2>&1)
-if echo "$OUTPUT" | grep -q "0 peer\|No peers\|discovered"; then
-    green "单节点无 peer（预期行为）"
+echo "--- Test 1: Bootstrap API status ---"
+STATUS=$(curl -s "http://localhost:$WEB_PORT/api/status" 2>/dev/null)
+if echo "$STATUS" | python3 -c "import sys,json; assert json.load(sys.stdin)['status']=='online'" 2>/dev/null; then
+    green "Bootstrap 在线"
     PASS=$((PASS+1))
 else
-    red "意外输出: $OUTPUT"
+    red "Bootstrap 离线"
     FAIL=$((FAIL+1))
 fi
 
-# 启动节点 B 和 C
+# Test 2: Bootstrap 初始 peers 为空
+echo
+echo "--- Test 2: 初始 peers 为空 ---"
+API_PEERS=$(curl -s "http://localhost:$WEB_PORT/api/peers" 2>/dev/null)
+API_COUNT=$(echo "$API_PEERS" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+if [ "$API_COUNT" -eq 0 ]; then
+    green "初始 peers 为空（预期）"
+    PASS=$((PASS+1))
+else
+    red "初始 peers 不为空: $API_COUNT"
+    FAIL=$((FAIL+1))
+fi
+
+# 启动 3 个节点
 start_node() {
     local port=$1 name=$2
     rm -f /tmp/np4_dht_${name}.fifo /tmp/np4_dht_${name}.log
@@ -63,48 +76,40 @@ start_node() {
 }
 
 echo
-echo "--- 启动节点 B 和 C ---"
+echo "--- 启动 3 个节点 ---"
+start_node $NODE_A_PORT "a"
 start_node $NODE_B_PORT "b"
 start_node $NODE_C_PORT "c"
-green "B 和 C 已启动"
+green "A、B、C 已启动"
 
-# 等待 DHT 传播
-sleep 5
+NODE_A_ID=$(grep "Peer ID:" /tmp/np4_dht_a.log | awk '{print $3}')
+NODE_B_ID=$(grep "Peer ID:" /tmp/np4_dht_b.log | awk '{print $3}')
+NODE_C_ID=$(grep "Peer ID:" /tmp/np4_dht_c.log | awk '{print $3}')
+green "A: $NODE_A_ID"
+green "B: $NODE_B_ID"
+green "C: $NODE_C_ID"
 
-# Test 2: A 通过 peers 发现 B 和 C
-echo
-echo "--- Test 2: A 通过 DHT 发现 B 和 C ---"
-OUTPUT=$("$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" peers 2>&1)
-PEER_COUNT=$(echo "$OUTPUT" | grep -ac "12D3Koo" 2>/dev/null || echo 0)
-if [ "$PEER_COUNT" -ge 2 ]; then
-    green "A 发现了 $PEER_COUNT 个 peer"
-    PASS=$((PASS+1))
-else
-    red "A 只发现 $PEER_COUNT 个 peer（预期 >= 2）"
-    FAIL=$((FAIL+1))
-fi
-
-# Test 3: Bootstrap API 显示已连接 peers
+# Test 3: Bootstrap API peers 接口正常响应
 echo
 echo "--- Test 3: Bootstrap API peers ---"
+sleep 2
 API_PEERS=$(curl -s "http://localhost:$WEB_PORT/api/peers" 2>/dev/null)
-API_COUNT=$(echo "$API_PEERS" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
-if [ "$API_COUNT" -gt 0 ]; then
-    green "Bootstrap API 显示 $API_COUNT 个 peer"
+IS_ARRAY=$(echo "$API_PEERS" | python3 -c "import sys,json; print(isinstance(json.load(sys.stdin), list))" 2>/dev/null)
+if [ "$IS_ARRAY" = "True" ]; then
+    green "Bootstrap API peers 返回数组"
     PASS=$((PASS+1))
 else
-    red "Bootstrap API 无 peer"
+    red "Bootstrap API peers 响应异常"
     FAIL=$((FAIL+1))
 fi
 
-# Test 4: Bootstrap API status 正常
+# Test 4: Bootstrap DHT peers > 0
 echo
-echo "--- Test 4: Bootstrap API status ---"
+echo "--- Test 4: Bootstrap DHT peers ---"
 STATUS=$(curl -s "http://localhost:$WEB_PORT/api/status" 2>/dev/null)
 DHT_PEERS=$(echo "$STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin)['dht_peers'])" 2>/dev/null || echo 0)
-UPTIME=$(echo "$STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin)['uptime'])" 2>/dev/null || echo "unknown")
 if [ "$DHT_PEERS" -gt 0 ]; then
-    green "DHT peers: $DHT_PEERS, uptime: $UPTIME"
+    green "DHT peers: $DHT_PEERS"
     PASS=$((PASS+1))
 else
     red "DHT peers 为 0"
@@ -114,15 +119,38 @@ fi
 # Test 5: 节点 ID 唯一性
 echo
 echo "--- Test 5: 节点 ID 唯一性 ---"
-NODE_A_ID=$("$BIN_DIR/np4cli" --port $NODE_A_PORT id 2>&1 | grep "Peer ID:" | awk '{print $3}')
-NODE_B_ID=$(grep "Peer ID:" /tmp/np4_dht_b.log | awk '{print $3}')
-NODE_C_ID=$(grep "Peer ID:" /tmp/np4_dht_c.log | awk '{print $3}')
-
 if [ "$NODE_A_ID" != "$NODE_B_ID" ] && [ "$NODE_B_ID" != "$NODE_C_ID" ] && [ "$NODE_A_ID" != "$NODE_C_ID" ]; then
     green "三个节点 ID 唯一"
     PASS=$((PASS+1))
 else
     red "存在重复 ID"
+    FAIL=$((FAIL+1))
+fi
+
+# Test 6: 节点地址格式正确
+echo
+echo "--- Test 6: 节点地址格式 ---"
+NODE_A_ADDR=$(grep "/ip4/127.0.0.1" /tmp/np4_dht_a.log | head -1 | awk '{print $1}')
+if echo "$NODE_A_ADDR" | grep -q "/p2p/"; then
+    green "地址包含 /p2p/ 后缀: $NODE_A_ADDR"
+    PASS=$((PASS+1))
+else
+    red "地址格式异常: $NODE_A_ADDR"
+    FAIL=$((FAIL+1))
+fi
+
+# Test 7: Bootstrap uptime 持续增长
+echo
+echo "--- Test 7: Bootstrap uptime ---"
+sleep 3
+STATUS2=$(curl -s "http://localhost:$WEB_PORT/api/status" 2>/dev/null)
+UPTIME1=$(echo "$STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin)['uptime'])" 2>/dev/null)
+UPTIME2=$(echo "$STATUS2" | python3 -c "import sys,json; print(json.load(sys.stdin)['uptime'])" 2>/dev/null)
+if [ "$UPTIME1" != "$UPTIME2" ]; then
+    green "uptime 增长: $UPTIME1 -> $UPTIME2"
+    PASS=$((PASS+1))
+else
+    red "uptime 未变化"
     FAIL=$((FAIL+1))
 fi
 

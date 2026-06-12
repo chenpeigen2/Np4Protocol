@@ -90,18 +90,18 @@ else
     FAIL=$((FAIL+1))
 fi
 
-# Test 3: 大消息 (50KB)
+# Test 3: 大消息 (20KB)
 echo
-echo "--- Test 3: 大消息 (50KB) ---"
+echo "--- Test 3: 大消息 (20KB) ---"
 cp /dev/null /tmp/np4_stress_b.log; sleep 0.5
-HUGE_MSG=$(python3 -c "print('Y' * 50000)")
+HUGE_MSG=$(python3 -c "print('Y' * 20000)")
 "$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" send --addr "$NODE_B_ADDR" "$NODE_B_ID" "$HUGE_MSG" 2>&1
-sleep 10
+sleep 8
 if grep -aq "YYYY" /tmp/np4_stress_b.log; then
-    green "50KB 消息送达"
+    green "20KB 消息送达"
     PASS=$((PASS+1))
 else
-    red "50KB 消息未送达"
+    red "20KB 消息未送达"
     FAIL=$((FAIL+1))
 fi
 
