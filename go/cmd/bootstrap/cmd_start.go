@@ -43,7 +43,7 @@ var startCmd = &cobra.Command{
 		defer h.Close()
 
 		ctx := context.Background()
-		dhtInstance, err := dht.New(ctx, h, dht.Mode(dht.ModeServer))
+		dhtInstance, err := p2p.StartDHT(ctx, h, nil) // nil bootstrap peers — this IS the bootstrap
 		if err != nil {
 			return fmt.Errorf("failed to create DHT: %w", err)
 		}
