@@ -216,6 +216,23 @@ func (n *Node) SendDirect(dest peer.ID, content []byte) error {
 	return p2p.WriteMsg(s, data)
 }
 
+// PickPath returns the peer IDs of N relays that would be used to route to dest.
+// Useful for debugging path selection without actually sending.
+func (n *Node) PickPath(ctx context.Context, dest peer.ID) ([]peer.ID, error) {
+	if n.pathSel == nil {
+		return nil, errors.New("DHT not initialized")
+	}
+	hops, err := n.pathSel.Pick(ctx, n.ID(), dest)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]peer.ID, len(hops))
+	for i, h := range hops {
+		out[i] = h.PeerID
+	}
+	return out, nil
+}
+
 // lookupDestPub fetches the destination's ECDH pubkey from the DHT. Returns
 // nil on any error (caller's onion.Build will then fail with a clear message).
 func (n *Node) lookupDestPub(dest peer.ID) []byte {

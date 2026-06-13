@@ -10,9 +10,10 @@ var idCmd = &cobra.Command{
 	Use:   "id",
 	Short: "Show this node's peer ID and addresses",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("Peer ID: %s\n", node.ID())
+		n := getNode(cmd)
+		fmt.Printf("Peer ID: %s\n", n.ID())
 		fmt.Println("Addresses:")
-		for _, addr := range node.Addrs() {
+		for _, addr := range n.Addrs() {
 			fmt.Printf("  %s\n", addr)
 		}
 	},

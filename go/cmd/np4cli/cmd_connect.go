@@ -13,6 +13,7 @@ var connectCmd = &cobra.Command{
 	Short: "Connect to a peer",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		n := getNode(cmd)
 		maddr, err := multiaddr.NewMultiaddr(args[0])
 		if err != nil {
 			return fmt.Errorf("invalid multiaddr: %w", err)
@@ -21,7 +22,7 @@ var connectCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("invalid peer info: %w", err)
 		}
-		if err := node.Connect(*info); err != nil {
+		if err := n.Connect(*info); err != nil {
 			return fmt.Errorf("connect failed: %w", err)
 		}
 		fmt.Printf("Connected to %s\n", info.ID)

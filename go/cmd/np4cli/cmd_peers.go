@@ -12,17 +12,17 @@ var peersCmd = &cobra.Command{
 	Use:   "peers",
 	Short: "Discover online peers via DHT",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		n := getNode(cmd)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
-		peerChan, err := node.FindPeers(ctx, rendezvous)
+		peerChan, err := n.FindPeers(ctx, rendezvous)
 		if err != nil {
-			return fmt.Errorf("DHT not available (use --bootstrap flag): %w", err)
+			return fmt.Errorf("DHT not available (use --bootstrap): %w", err)
 		}
-
 		count := 0
 		for pi := range peerChan {
-			if pi.ID == node.ID() {
+			if pi.ID == n.ID() {
 				continue
 			}
 			fmt.Printf("Peer: %s\n", pi.ID)
@@ -31,7 +31,6 @@ var peersCmd = &cobra.Command{
 			}
 			count++
 		}
-
 		if count == 0 {
 			fmt.Println("No peers found")
 		} else {
