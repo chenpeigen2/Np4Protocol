@@ -1,10 +1,15 @@
 package main
 
 import (
+	"os"
+
 	"github.com/spf13/cobra"
 )
 
-var port int
+var (
+	port         int
+	identityPath string
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "np4bootstrap",
@@ -13,5 +18,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	defaultPath := os.ExpandEnv("$HOME/.np4/identity")
 	rootCmd.PersistentFlags().IntVar(&port, "port", 4000, "TCP listen port")
+	rootCmd.PersistentFlags().StringVar(&identityPath, "identity", defaultPath, "Path to persistent identity file")
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"Np4Protocol/go/pkg/identity"
 	"Np4Protocol/go/pkg/p2p"
 	"context"
 	"embed"
@@ -29,7 +30,11 @@ var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the bootstrap node",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		h, err := p2p.NewHost(port)
+		id, err := identity.LoadOrCreate(identityPath)
+		if err != nil {
+			return fmt.Errorf("load identity: %w", err)
+		}
+		h, err := p2p.NewHostWithIdentity(id, port)
 		if err != nil {
 			return fmt.Errorf("failed to create host: %w", err)
 		}
