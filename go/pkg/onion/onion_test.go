@@ -91,3 +91,17 @@ func TestDecodeWrongKeyFails(t *testing.T) {
 		t.Fatal("expected error with wrong key")
 	}
 }
+
+func FuzzDecode(f *testing.F) {
+	dir := f.TempDir()
+	dest, _ := identity.LoadOrCreate(filepath.Join(dir, "d"))
+	on, _ := Build([]Hop{{PeerID: dest.PeerID(), ECDHPub: dest.ECDHPub()}}, []byte("seed"))
+	f.Add(on.Bytes())
+	f.Add([]byte{0, 1, 2, 3})
+	f.Add([]byte{})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		// Must not panic on arbitrary input.
+		_, _ = Decode(data, dest)
+	})
+}

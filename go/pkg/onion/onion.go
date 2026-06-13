@@ -1,3 +1,13 @@
+// Package onion implements layered ECIES encryption for mix routing.
+//
+// Each layer is encrypted with an ephemeral X25519 keypair and the recipient's
+// static ECDH public key; the symmetric key is derived via HKDF-SHA256 and the
+// payload is sealed with ChaCha20-Poly1305. Relays decrypt one layer to learn
+// the next hop; the final destination decrypts the innermost layer to receive
+// the application payload.
+//
+// Replay protection is NOT provided at this layer. Callers (relay nodes) must
+// track seen ephemeral public keys or nonces if replay resistance is required.
 package onion
 
 import (
@@ -20,6 +30,11 @@ const (
 	nonceSize  = 12
 	saltString = "np4-onion-v1"
 )
+
+// maxPeerIDLen caps the declared length of a relay layer's next-hop peer ID.
+// It guards against malicious length prefixes that would force oversized
+// allocations during decode.
+const maxPeerIDLen = 1024
 
 const (
 	flagRelay = 0
@@ -97,6 +112,9 @@ func Decode(packet []byte, id *identity.Identity) (*Decoded, error) {
 			return nil, errors.New("relay layer too short for length prefix")
 		}
 		nextLen := binary.BigEndian.Uint32(rest[:4])
+		if nextLen > maxPeerIDLen {
+			return nil, fmt.Errorf("relay layer: next hop length %d exceeds max %d", nextLen, maxPeerIDLen)
+		}
 		if uint64(len(rest)) < 4+uint64(nextLen) {
 			return nil, errors.New("relay layer truncated")
 		}
