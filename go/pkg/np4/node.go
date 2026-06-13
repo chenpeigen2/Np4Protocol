@@ -112,6 +112,7 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 		ctx:      ctx,
 		cancel:   cancel,
 	}
+	n.bus.Start()
 	n.mix = mix.NewMixEngine[pendingPacket](defaultMixBatch, defaultMixDelay, n.flushBatch)
 
 	if len(cfg.bootstrap) > 0 {
@@ -320,6 +321,7 @@ func (n *Node) ServeRelay() error {
 func (n *Node) Close() error {
 	var firstErr error
 	n.stopOnce.Do(func() {
+		n.bus.Stop()
 		n.cancel()
 		if err := n.mix.Close(); err != nil && firstErr == nil {
 			firstErr = err
