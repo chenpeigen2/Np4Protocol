@@ -24,6 +24,16 @@ type Identity struct {
 }
 
 func LoadOrCreate(path string) (*Identity, error) {
+	// Empty path = ephemeral in-memory identity (no persistence). Used by
+	// nodes created without WithIdentity (tests, ad-hoc CLI runs).
+	if path == "" {
+		_, edPriv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, fmt.Errorf("generate ed25519: %w", err)
+		}
+		return fromSeed(edPriv.Seed())
+	}
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)
 	}

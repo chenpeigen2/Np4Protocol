@@ -11,10 +11,10 @@ import (
 )
 
 var (
-	port        int
-	bootstrap   string
-	rendezvous  string
-	node        *np4.Node
+	port       int
+	bootstrap  string
+	rendezvous string
+	node       *np4.Node
 )
 
 var rootCmd = &cobra.Command{
@@ -42,7 +42,10 @@ func initNode() error {
 		if err != nil {
 			return fmt.Errorf("invalid bootstrap peer info: %w", err)
 		}
-		n, err := np4.NewNodeWithBootstrap(port, []peer.AddrInfo{*info}, rendezvous)
+		n, err := np4.NewNode(port,
+			np4.WithBootstrap([]peer.AddrInfo{*info}),
+			np4.WithRendezvous(rendezvous),
+		)
 		if err != nil {
 			return fmt.Errorf("failed to create node: %w", err)
 		}

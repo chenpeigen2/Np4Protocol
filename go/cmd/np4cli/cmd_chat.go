@@ -93,7 +93,7 @@ var chatCmd = &cobra.Command{
 					fmt.Printf("Invalid peer info: %v\n", err)
 					break
 				}
-				if err := node.Connect(info.Addrs, info.ID); err != nil {
+				if err := node.Connect(*info); err != nil {
 					fmt.Printf("Connect failed: %v\n", err)
 				} else {
 					fmt.Printf("Connected to %s\n", info.ID)

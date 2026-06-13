@@ -22,6 +22,21 @@ func TestLoadOrCreatePersists(t *testing.T) {
 	}
 }
 
+func TestLoadOrCreateEphemeral(t *testing.T) {
+	// Empty path must produce a usable in-memory identity without touching disk.
+	a, err := LoadOrCreate("")
+	if err != nil {
+		t.Fatalf("LoadOrCreate(\"\"): %v", err)
+	}
+	if a.PeerID() == "" {
+		t.Fatal("ephemeral identity has empty PeerID")
+	}
+	b, _ := LoadOrCreate("")
+	if a.PeerID() == b.PeerID() {
+		t.Fatal("two ephemeral identities collided")
+	}
+}
+
 func TestECDHSymmetric(t *testing.T) {
 	a, _ := LoadOrCreate(t.TempDir() + "/a")
 	b, _ := LoadOrCreate(t.TempDir() + "/b")

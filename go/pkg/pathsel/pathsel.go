@@ -138,3 +138,11 @@ func PublishECDH(ctx context.Context, d *dht.IpfsDHT, pid peer.ID, ecdhPub []byt
 	key := ecdhKeyPrefix + base32.StdEncoding.EncodeToString([]byte(pid))
 	return d.PutValue(ctx, key, ecdhPub)
 }
+
+// GetECDH reads a peer's published ECDH pubkey from the DHT. Returns the raw
+// bytes (nil on any DHT error or missing key). Used when building an onion
+// path whose final hop is a destination that has published its own key.
+func GetECDH(ctx context.Context, d *dht.IpfsDHT, pid peer.ID) ([]byte, error) {
+	key := ecdhKeyPrefix + base32.StdEncoding.EncodeToString([]byte(pid))
+	return d.GetValue(ctx, key)
+}

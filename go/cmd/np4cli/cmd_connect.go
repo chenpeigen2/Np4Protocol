@@ -21,7 +21,7 @@ var connectCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("invalid peer info: %w", err)
 		}
-		if err := node.Connect(info.Addrs, info.ID); err != nil {
+		if err := node.Connect(*info); err != nil {
 			return fmt.Errorf("connect failed: %w", err)
 		}
 		fmt.Printf("Connected to %s\n", info.ID)

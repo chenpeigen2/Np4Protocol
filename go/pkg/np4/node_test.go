@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 func TestNodeSendReceive(t *testing.T) {
@@ -21,7 +23,7 @@ func TestNodeSendReceive(t *testing.T) {
 	defer nodeB.Stop()
 
 	// Connect A -> B
-	err = nodeA.Connect(nodeB.Host().Addrs(), nodeB.ID())
+	err = nodeA.Connect(peer.AddrInfo{ID: nodeB.ID(), Addrs: nodeB.Host().Addrs()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +56,7 @@ func TestNodeBidirectional(t *testing.T) {
 	nodeB, _ := NewNode(0)
 	defer nodeB.Stop()
 
-	nodeA.Connect(nodeB.Host().Addrs(), nodeB.ID())
+	nodeA.Connect(peer.AddrInfo{ID: nodeB.ID(), Addrs: nodeB.Host().Addrs()})
 
 	var receivedA, receivedB []byte
 	var mu sync.Mutex
@@ -93,9 +95,9 @@ func TestFullP2PFlow(t *testing.T) {
 	nodeC, _ := NewNode(0)
 	defer nodeC.Stop()
 
-	nodeA.Connect(nodeB.Host().Addrs(), nodeB.ID())
-	nodeA.Connect(nodeC.Host().Addrs(), nodeC.ID())
-	nodeB.Connect(nodeC.Host().Addrs(), nodeC.ID())
+	nodeA.Connect(peer.AddrInfo{ID: nodeB.ID(), Addrs: nodeB.Host().Addrs()})
+	nodeA.Connect(peer.AddrInfo{ID: nodeC.ID(), Addrs: nodeC.Host().Addrs()})
+	nodeB.Connect(peer.AddrInfo{ID: nodeC.ID(), Addrs: nodeC.Host().Addrs()})
 
 	var receivedB, receivedC []byte
 	var mu sync.Mutex
