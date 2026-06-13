@@ -3,8 +3,10 @@ package main
 import (
 	"Np4Protocol/go/pkg/identity"
 	"Np4Protocol/go/pkg/p2p"
+	"Np4Protocol/go/pkg/pathsel"
 	"context"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -96,12 +98,15 @@ func startGinServer(h host.Host, dhtInstance *dht.IpfsDHT) {
 		for i, addr := range h.Addrs() {
 			addrs[i] = addr.String() + "/p2p/" + h.ID().String()
 		}
-
+		rtSize := 0
+		if dhtInstance != nil {
+			rtSize = dhtInstance.RoutingTable().Size()
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"peer_id":   h.ID().String(),
 			"addresses": addrs,
 			"uptime":    time.Since(startTime).Round(time.Second).String(),
-			"dht_peers": len(h.Peerstore().Peers()),
+			"dht_peers": rtSize,
 			"status":    "online",
 		})
 	})
@@ -125,6 +130,26 @@ func startGinServer(h host.Host, dhtInstance *dht.IpfsDHT) {
 		}
 
 		c.JSON(http.StatusOK, peerList)
+	})
+
+	r.GET("/api/relays", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		finder := &pathsel.DHTFinder{DHT: dhtInstance, Timeout: 5 * time.Second}
+		relays, err := finder.FindRelays(ctx)
+		if err != nil {
+			c.JSON(http.StatusOK, []interface{}{}) // empty on error
+			return
+		}
+		out := make([]gin.H, 0, len(relays))
+		for _, r := range relays {
+			out = append(out, gin.H{
+				"id":       r.ID.String(),
+				"ecdh_pub": hex.EncodeToString(r.ECDHPub),
+			})
+		}
+		c.JSON(http.StatusOK, out)
 	})
 
 	r.Run(fmt.Sprintf(":%d", webPort))
