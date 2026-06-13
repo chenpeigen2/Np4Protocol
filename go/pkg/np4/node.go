@@ -1,8 +1,11 @@
 // Package np4 wires together the mix engine, onion layer, identity, and p2p
-// host into a single Node. A Node runs in one of two modes:
+// host into a single Node. A Node runs in one of three modes:
 //
-//   - Direct-only: created without WithBootstrap. No DHT, no mix routing;
-//     Send falls back to a single-hop direct stream.
+//   - Direct-only: created without WithBootstrap/WithDHTServer. No DHT, no mix
+//     routing; Send falls back to a single-hop direct stream.
+//   - DHT server: created with WithDHTServer. Runs a standalone Kademlia DHT
+//     in server mode (a seed/bootstrap node). Records published by other nodes
+//     are stored here. Send falls back to direct.
 //   - Routed: created with WithBootstrap. Joins the DHT, routes Send through
 //     an onion path of relays selected via the path selector.
 package np4
@@ -72,6 +75,7 @@ type config struct {
 	bootstrap    []peer.AddrInfo
 	rendezvous   string
 	hops         int
+	dhtServer    bool
 }
 
 // WithIdentity loads (or creates) the node's identity from path.
@@ -79,6 +83,12 @@ func WithIdentity(path string) Option { return func(c *config) { c.identityPath 
 
 // WithBootstrap enables DHT mode and bootstraps off the given peers.
 func WithBootstrap(p []peer.AddrInfo) Option { return func(c *config) { c.bootstrap = p } }
+
+// WithDHTServer runs the node as a standalone DHT server (no bootstrap peers).
+// Use this for bootstrap/seed nodes that other nodes connect to — they need a
+// running DHT in server mode to store records published by relays/clients.
+// Mutually exclusive with WithBootstrap: WithDHTServer takes precedence.
+func WithDHTServer() Option { return func(c *config) { c.dhtServer = true } }
 
 // WithRendezvous overrides the default "np4-network" rendezvous string.
 func WithRendezvous(r string) Option { return func(c *config) { c.rendezvous = r } }
@@ -115,7 +125,12 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 	n.bus.Start()
 	n.mix = mix.NewMixEngine[pendingPacket](defaultMixBatch, defaultMixDelay, n.flushBatch)
 
-	if len(cfg.bootstrap) > 0 {
+	// DHT is enabled in two cases:
+	//   - WithDHTServer: standalone seed/bootstrap node (no bootstrap peers,
+	//     stores records for other nodes).
+	//   - WithBootstrap: joins an existing DHT via bootstrap peers, also routes
+	//     Send through the mix.
+	if cfg.dhtServer || len(cfg.bootstrap) > 0 {
 		kdht, err := p2p.StartDHT(ctx, h, cfg.bootstrap)
 		if err != nil {
 			cancel()
@@ -125,9 +140,14 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 		n.dht = kdht
 		p2p.AdvertiseRendezvous(ctx, kdht, cfg.rendezvous)
 
-		n.pathSel = &pathsel.Selector{
-			Hops:   cfg.hops,
-			Finder: &pathsel.DHTFinder{DHT: kdht, Timeout: 15 * time.Second},
+		// A standalone DHT server (seed node) has no onion-path consumers; it
+		// only serves records. Skip the path selector so Send falls back to
+		// direct.
+		if len(cfg.bootstrap) > 0 {
+			n.pathSel = &pathsel.Selector{
+				Hops:   cfg.hops,
+				Finder: &pathsel.DHTFinder{DHT: kdht, Timeout: 15 * time.Second},
+			}
 		}
 	}
 
@@ -321,13 +341,64 @@ func (n *Node) handleDirectStream(s network.Stream) {
 	n.bus.Send(&msg)
 }
 
+// waitForDHTPeers blocks until the DHT routing table has at least min peers or
+// the context expires. Returns nil if min peers are present, an error otherwise.
+// This is critical for ServeRelay — PutValue needs at least one peer in the
+// routing table to store the record.
+func (n *Node) waitForDHTPeers(ctx context.Context, min int) error {
+	if n.dht == nil {
+		return errors.New("DHT not initialized")
+	}
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if n.dht.RoutingTable().Size() >= min {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timed out waiting for %d DHT peers (have %d): %w",
+				min, n.dht.RoutingTable().Size(), ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
 // ServeRelay advertises this node as a mix relay in the DHT. Other nodes will
 // be able to include it in their onion paths. Requires WithBootstrap.
 func (n *Node) ServeRelay() error {
 	if n.dht == nil {
 		return errors.New("DHT not initialized; pass WithBootstrap when creating the node")
 	}
+	// Wait for the routing table to have at least one peer before publishing.
+	// Without this, PutValue fails with "failed to find any peer in table".
+	waitCtx, cancel := context.WithTimeout(n.ctx, 15*time.Second)
+	defer cancel()
+	if err := n.waitForDHTPeers(waitCtx, 1); err != nil {
+		return fmt.Errorf("wait for DHT peers: %w", err)
+	}
 	p2p.AdvertiseRendezvous(n.ctx, n.dht, "np4-relay")
+	if err := pathsel.PublishECDH(n.ctx, n.dht, n.ID(), n.identity.ECDHPub()); err != nil {
+		return fmt.Errorf("publish ECDH: %w", err)
+	}
+	return nil
+}
+
+// PublishKeys publishes this node's ECDH pubkey to the DHT so other peers can
+// build onion layers addressed to it. Like ServeRelay, it waits for the DHT
+// routing table to have at least one peer first — but unlike ServeRelay it does
+// NOT advertise as a mix relay. Use this for receiver/client nodes that need
+// to be reachable (final onion hop) but should not be selected as intermediate
+// relays. Requires WithBootstrap.
+func (n *Node) PublishKeys() error {
+	if n.dht == nil {
+		return errors.New("DHT not initialized; pass WithBootstrap when creating the node")
+	}
+	waitCtx, cancel := context.WithTimeout(n.ctx, 15*time.Second)
+	defer cancel()
+	if err := n.waitForDHTPeers(waitCtx, 1); err != nil {
+		return fmt.Errorf("wait for DHT peers: %w", err)
+	}
 	if err := pathsel.PublishECDH(n.ctx, n.dht, n.ID(), n.identity.ECDHPub()); err != nil {
 		return fmt.Errorf("publish ECDH: %w", err)
 	}
