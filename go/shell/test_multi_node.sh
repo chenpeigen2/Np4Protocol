@@ -8,6 +8,10 @@ NODE_A_PORT=4601
 NODE_B_PORT=4602
 NODE_C_PORT=4603
 BIN_DIR="$(cd "$(dirname "$0")/.." && pwd)/bin"
+TEST_IDENTITY="/tmp/np4_test_boot_$(basename $0 .sh)_$$"
+NODE_A_IDENTITY="/tmp/np4_test_multiA_$(basename $0 .sh)_$$"
+NODE_B_IDENTITY="/tmp/np4_test_multiB_$(basename $0 .sh)_$$"
+NODE_C_IDENTITY="/tmp/np4_test_multiC_$(basename $0 .sh)_$$"
 PASS=0
 FAIL=0
 
@@ -18,7 +22,7 @@ cleanup() {
     for port in $BOOTSTRAP_PORT $NODE_A_PORT $NODE_B_PORT $NODE_C_PORT; do
         lsof -ti :$port 2>/dev/null | xargs kill -9 2>/dev/null
     done
-    rm -f /tmp/np4_multi_*.log /tmp/np4_multi_*.fifo
+    rm -f /tmp/np4_multi_*.log /tmp/np4_multi_*.fifo "$TEST_IDENTITY" /tmp/np4_boot_$$.log "$NODE_A_IDENTITY" "$NODE_B_IDENTITY" "$NODE_C_IDENTITY"
 }
 trap cleanup EXIT
 
@@ -37,26 +41,26 @@ done
 sleep 1
 
 # 启动 Bootstrap
-"$BIN_DIR/bootstrap" start --port $BOOTSTRAP_PORT --web $WEB_PORT &
+"$BIN_DIR/bootstrap" start --port $BOOTSTRAP_PORT --web $WEB_PORT --identity "$TEST_IDENTITY" > /tmp/np4_boot_$$.log 2>&1 &
 sleep 2
-BOOTSTRAP_MULTIADDR=$("$BIN_DIR/bootstrap" id --port $BOOTSTRAP_PORT 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $1}')
+BOOTSTRAP_MULTIADDR=$("$BIN_DIR/bootstrap" id --port $BOOTSTRAP_PORT --identity "$TEST_IDENTITY" 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $NF}')
 green "Bootstrap: $BOOTSTRAP_MULTIADDR"
 
 # 启动 3 个节点
 start_node() {
-    local port=$1 name=$2
+    local port=$1 name=$2 ident=$3
     rm -f /tmp/np4_multi_${name}.fifo /tmp/np4_multi_${name}.log
     mkfifo /tmp/np4_multi_${name}.fifo
-    (tail -f /dev/null | "$BIN_DIR/np4cli" --port $port --bootstrap "$BOOTSTRAP_MULTIADDR" chat > /tmp/np4_multi_${name}.fifo 2>&1) &
+    (tail -f /dev/null | "$BIN_DIR/np4cli" --port $port --bootstrap "$BOOTSTRAP_MULTIADDR" --identity "$ident" chat > /tmp/np4_multi_${name}.fifo 2>&1) &
     cat /tmp/np4_multi_${name}.fifo > /tmp/np4_multi_${name}.log &
     sleep 3
 }
 
 echo
 echo "--- 启动 3 个节点 ---"
-start_node $NODE_A_PORT "a"
-start_node $NODE_B_PORT "b"
-start_node $NODE_C_PORT "c"
+start_node $NODE_A_PORT "a" "$NODE_A_IDENTITY"
+start_node $NODE_B_PORT "b" "$NODE_B_IDENTITY"
+start_node $NODE_C_PORT "c" "$NODE_C_IDENTITY"
 
 NODE_A_ID=$(grep "Peer ID:" /tmp/np4_multi_a.log | awk '{print $3}')
 NODE_A_ADDR=$(grep "/ip4/127.0.0.1" /tmp/np4_multi_a.log | head -1 | awk '{print $1}')
@@ -72,8 +76,8 @@ green "C: $NODE_C_ID"
 # Test 1: A 连接 B 和 C
 echo
 echo "--- Test 1: A 连接 B 和 C ---"
-OUT_AB=$("$BIN_DIR/np4cli" --port $NODE_A_PORT connect "$NODE_B_ADDR" 2>&1)
-OUT_AC=$("$BIN_DIR/np4cli" --port $NODE_A_PORT connect "$NODE_C_ADDR" 2>&1)
+OUT_AB=$("$BIN_DIR/np4cli" --port $NODE_A_PORT --identity "$NODE_A_IDENTITY" connect "$NODE_B_ADDR" 2>&1)
+OUT_AC=$("$BIN_DIR/np4cli" --port $NODE_A_PORT --identity "$NODE_A_IDENTITY" connect "$NODE_C_ADDR" 2>&1)
 if echo "$OUT_AB" | grep -q "Connected" && echo "$OUT_AC" | grep -q "Connected"; then
     green "A -> B, A -> C 连接成功"
     PASS=$((PASS+1))
@@ -85,7 +89,7 @@ fi
 # Test 2: B 连接 C
 echo
 echo "--- Test 2: B 连接 C ---"
-OUT_BC=$("$BIN_DIR/np4cli" --port $NODE_B_PORT connect "$NODE_C_ADDR" 2>&1)
+OUT_BC=$("$BIN_DIR/np4cli" --port $NODE_B_PORT --identity "$NODE_B_IDENTITY" connect "$NODE_C_ADDR" 2>&1)
 if echo "$OUT_BC" | grep -q "Connected"; then
     green "B -> C 连接成功"
     PASS=$((PASS+1))
@@ -98,7 +102,7 @@ fi
 echo
 echo "--- Test 3: A -> B 消息 ---"
 cp /dev/null /tmp/np4_multi_b.log; sleep 0.5
-"$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" send --addr "$NODE_B_ADDR" "$NODE_B_ID" "from-A-to-B" 2>&1
+"$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" --identity "$NODE_A_IDENTITY" send --addr "$NODE_B_ADDR" "$NODE_B_ID" "from-A-to-B" 2>&1
 sleep 3
 if grep -aq "from-A-to-B" /tmp/np4_multi_b.log; then
     green "A -> B 送达"
@@ -112,7 +116,7 @@ fi
 echo
 echo "--- Test 4: A -> C 消息 ---"
 cp /dev/null /tmp/np4_multi_c.log; sleep 0.5
-"$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" send --addr "$NODE_C_ADDR" "$NODE_C_ID" "from-A-to-C" 2>&1
+"$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" --identity "$NODE_A_IDENTITY" send --addr "$NODE_C_ADDR" "$NODE_C_ID" "from-A-to-C" 2>&1
 sleep 3
 if grep -aq "from-A-to-C" /tmp/np4_multi_c.log; then
     green "A -> C 送达"
@@ -126,7 +130,7 @@ fi
 echo
 echo "--- Test 5: B -> A 消息 ---"
 cp /dev/null /tmp/np4_multi_a.log; sleep 0.5
-"$BIN_DIR/np4cli" --port $NODE_B_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" send --addr "$NODE_A_ADDR" "$NODE_A_ID" "from-B-to-A" 2>&1
+"$BIN_DIR/np4cli" --port $NODE_B_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" --identity "$NODE_B_IDENTITY" send --addr "$NODE_A_ADDR" "$NODE_A_ID" "from-B-to-A" 2>&1
 sleep 3
 if grep -aq "from-B-to-A" /tmp/np4_multi_a.log; then
     green "B -> A 送达"
@@ -140,7 +144,7 @@ fi
 echo
 echo "--- Test 6: C -> A 消息 ---"
 cp /dev/null /tmp/np4_multi_a.log; sleep 0.5
-"$BIN_DIR/np4cli" --port $NODE_C_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" send --addr "$NODE_A_ADDR" "$NODE_A_ID" "from-C-to-A" 2>&1
+"$BIN_DIR/np4cli" --port $NODE_C_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" --identity "$NODE_C_IDENTITY" send --addr "$NODE_A_ADDR" "$NODE_A_ID" "from-C-to-A" 2>&1
 sleep 3
 if grep -aq "from-C-to-A" /tmp/np4_multi_a.log; then
     green "C -> A 送达"
@@ -154,7 +158,7 @@ fi
 echo
 echo "--- Test 7: C -> B 消息 ---"
 cp /dev/null /tmp/np4_multi_b.log; sleep 0.5
-"$BIN_DIR/np4cli" --port $NODE_C_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" send --addr "$NODE_B_ADDR" "$NODE_B_ID" "from-C-to-B" 2>&1
+"$BIN_DIR/np4cli" --port $NODE_C_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" --identity "$NODE_C_IDENTITY" send --addr "$NODE_B_ADDR" "$NODE_B_ID" "from-C-to-B" 2>&1
 sleep 3
 if grep -aq "from-C-to-B" /tmp/np4_multi_b.log; then
     green "C -> B 送达"

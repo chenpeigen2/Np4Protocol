@@ -7,6 +7,9 @@ WEB_PORT=8900
 NODE_A_PORT=4901
 NODE_B_PORT=4902
 BIN_DIR="$(cd "$(dirname "$0")/.." && pwd)/bin"
+TEST_IDENTITY="/tmp/np4_test_boot_$(basename $0 .sh)_$$"
+NODE_A_IDENTITY="/tmp/np4_test_reconnA_$(basename $0 .sh)_$$"
+NODE_B_IDENTITY="/tmp/np4_test_reconnB_$(basename $0 .sh)_$$"
 PASS=0
 FAIL=0
 
@@ -17,7 +20,7 @@ cleanup() {
     for port in $BOOTSTRAP_PORT $NODE_A_PORT $NODE_B_PORT; do
         lsof -ti :$port 2>/dev/null | xargs kill -9 2>/dev/null
     done
-    rm -f /tmp/np4_reconnect_*.log /tmp/np4_reconnect_*.fifo
+    rm -f /tmp/np4_reconnect_*.log /tmp/np4_reconnect_*.fifo "$TEST_IDENTITY" /tmp/np4_boot_$$.log "$NODE_A_IDENTITY" "$NODE_B_IDENTITY"
 }
 trap cleanup EXIT
 
@@ -34,14 +37,14 @@ done
 sleep 1
 
 # 启动 Bootstrap
-"$BIN_DIR/bootstrap" start --port $BOOTSTRAP_PORT --web $WEB_PORT &
+"$BIN_DIR/bootstrap" start --port $BOOTSTRAP_PORT --web $WEB_PORT --identity "$TEST_IDENTITY" > /tmp/np4_boot_$$.log 2>&1 &
 sleep 2
-BOOTSTRAP_MULTIADDR=$("$BIN_DIR/bootstrap" id --port $BOOTSTRAP_PORT 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $1}')
+BOOTSTRAP_MULTIADDR=$("$BIN_DIR/bootstrap" id --port $BOOTSTRAP_PORT --identity "$TEST_IDENTITY" 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $NF}')
 
 # 启动节点 B（长期运行）
 rm -f /tmp/np4_reconnect_b.fifo /tmp/np4_reconnect_b.log
 mkfifo /tmp/np4_reconnect_b.fifo
-(tail -f /dev/null | "$BIN_DIR/np4cli" --port $NODE_B_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" chat > /tmp/np4_reconnect_b.fifo 2>&1) &
+(tail -f /dev/null | "$BIN_DIR/np4cli" --port $NODE_B_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" --identity "$NODE_B_IDENTITY" chat > /tmp/np4_reconnect_b.fifo 2>&1) &
 cat /tmp/np4_reconnect_b.fifo > /tmp/np4_reconnect_b.log &
 sleep 3
 
@@ -52,9 +55,9 @@ green "B: $NODE_B_ID"
 # Test 1: 第一次连接和通信
 echo
 echo "--- Test 1: 第一次连接 ---"
-"$BIN_DIR/np4cli" --port $NODE_A_PORT connect "$NODE_B_ADDR" 2>&1
+"$BIN_DIR/np4cli" --port $NODE_A_PORT --identity "$NODE_A_IDENTITY" connect "$NODE_B_ADDR" 2>&1
 cp /dev/null /tmp/np4_reconnect_b.log; sleep 0.5
-"$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" send --addr "$NODE_B_ADDR" "$NODE_B_ID" "msg-1-first" 2>&1
+"$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" --identity "$NODE_A_IDENTITY" send --addr "$NODE_B_ADDR" "$NODE_B_ID" "msg-1-first" 2>&1
 sleep 3
 if grep -aq "msg-1-first" /tmp/np4_reconnect_b.log; then
     green "第一次通信成功"
@@ -67,9 +70,9 @@ fi
 # Test 2: 第二次连接（同端口，新节点）
 echo
 echo "--- Test 2: 第二次连接 ---"
-"$BIN_DIR/np4cli" --port $NODE_A_PORT connect "$NODE_B_ADDR" 2>&1
+"$BIN_DIR/np4cli" --port $NODE_A_PORT --identity "$NODE_A_IDENTITY" connect "$NODE_B_ADDR" 2>&1
 cp /dev/null /tmp/np4_reconnect_b.log; sleep 0.5
-"$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" send --addr "$NODE_B_ADDR" "$NODE_B_ID" "msg-2-second" 2>&1
+"$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" --identity "$NODE_A_IDENTITY" send --addr "$NODE_B_ADDR" "$NODE_B_ID" "msg-2-second" 2>&1
 sleep 3
 if grep -aq "msg-2-second" /tmp/np4_reconnect_b.log; then
     green "第二次通信成功"
@@ -82,9 +85,9 @@ fi
 # Test 3: 第三次连接
 echo
 echo "--- Test 3: 第三次连接 ---"
-"$BIN_DIR/np4cli" --port $NODE_A_PORT connect "$NODE_B_ADDR" 2>&1
+"$BIN_DIR/np4cli" --port $NODE_A_PORT --identity "$NODE_A_IDENTITY" connect "$NODE_B_ADDR" 2>&1
 cp /dev/null /tmp/np4_reconnect_b.log; sleep 0.5
-"$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" send --addr "$NODE_B_ADDR" "$NODE_B_ID" "msg-3-third" 2>&1
+"$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" --identity "$NODE_A_IDENTITY" send --addr "$NODE_B_ADDR" "$NODE_B_ID" "msg-3-third" 2>&1
 sleep 3
 if grep -aq "msg-3-third" /tmp/np4_reconnect_b.log; then
     green "第三次通信成功"
@@ -99,10 +102,10 @@ echo
 echo "--- Test 4: 快速连续 5 次连接 ---"
 ALL_OK=true
 for i in $(seq 1 5); do
-    "$BIN_DIR/np4cli" --port $NODE_A_PORT connect "$NODE_B_ADDR" 2>&1
+    "$BIN_DIR/np4cli" --port $NODE_A_PORT --identity "$NODE_A_IDENTITY" connect "$NODE_B_ADDR" 2>&1
 done
 cp /dev/null /tmp/np4_reconnect_b.log; sleep 0.5
-"$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" send --addr "$NODE_B_ADDR" "$NODE_B_ID" "msg-after-rapid" 2>&1
+"$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" --identity "$NODE_A_IDENTITY" send --addr "$NODE_B_ADDR" "$NODE_B_ID" "msg-after-rapid" 2>&1
 sleep 3
 if grep -aq "msg-after-rapid" /tmp/np4_reconnect_b.log; then
     green "快速连接后通信成功"

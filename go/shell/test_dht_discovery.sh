@@ -8,6 +8,10 @@ NODE_A_PORT=4801
 NODE_B_PORT=4802
 NODE_C_PORT=4803
 BIN_DIR="$(cd "$(dirname "$0")/.." && pwd)/bin"
+TEST_IDENTITY="/tmp/np4_test_boot_$(basename $0 .sh)_$$"
+NODE_A_IDENTITY="/tmp/np4_test_dhtA_$(basename $0 .sh)_$$"
+NODE_B_IDENTITY="/tmp/np4_test_dhtB_$(basename $0 .sh)_$$"
+NODE_C_IDENTITY="/tmp/np4_test_dhtC_$(basename $0 .sh)_$$"
 PASS=0
 FAIL=0
 
@@ -18,7 +22,7 @@ cleanup() {
     for port in $BOOTSTRAP_PORT $NODE_A_PORT $NODE_B_PORT $NODE_C_PORT; do
         lsof -ti :$port 2>/dev/null | xargs kill -9 2>/dev/null
     done
-    rm -f /tmp/np4_dht_*.log /tmp/np4_dht_*.fifo
+    rm -f /tmp/np4_dht_*.log /tmp/np4_dht_*.fifo "$TEST_IDENTITY" /tmp/np4_boot_$$.log "$NODE_A_IDENTITY" "$NODE_B_IDENTITY" "$NODE_C_IDENTITY"
 }
 trap cleanup EXIT
 
@@ -35,9 +39,9 @@ done
 sleep 1
 
 # 启动 Bootstrap
-"$BIN_DIR/bootstrap" start --port $BOOTSTRAP_PORT --web $WEB_PORT &
+"$BIN_DIR/bootstrap" start --port $BOOTSTRAP_PORT --web $WEB_PORT --identity "$TEST_IDENTITY" > /tmp/np4_boot_$$.log 2>&1 &
 sleep 2
-BOOTSTRAP_MULTIADDR=$("$BIN_DIR/bootstrap" id --port $BOOTSTRAP_PORT 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $1}')
+BOOTSTRAP_MULTIADDR=$("$BIN_DIR/bootstrap" id --port $BOOTSTRAP_PORT --identity "$TEST_IDENTITY" 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $NF}')
 green "Bootstrap 启动"
 
 # Test 1: Bootstrap API /api/status 在线
@@ -67,19 +71,19 @@ fi
 
 # 启动 3 个节点
 start_node() {
-    local port=$1 name=$2
+    local port=$1 name=$2 ident=$3
     rm -f /tmp/np4_dht_${name}.fifo /tmp/np4_dht_${name}.log
     mkfifo /tmp/np4_dht_${name}.fifo
-    (tail -f /dev/null | "$BIN_DIR/np4cli" --port $port --bootstrap "$BOOTSTRAP_MULTIADDR" chat > /tmp/np4_dht_${name}.fifo 2>&1) &
+    (tail -f /dev/null | "$BIN_DIR/np4cli" --port $port --bootstrap "$BOOTSTRAP_MULTIADDR" --identity "$ident" chat > /tmp/np4_dht_${name}.fifo 2>&1) &
     cat /tmp/np4_dht_${name}.fifo > /tmp/np4_dht_${name}.log &
     sleep 3
 }
 
 echo
 echo "--- 启动 3 个节点 ---"
-start_node $NODE_A_PORT "a"
-start_node $NODE_B_PORT "b"
-start_node $NODE_C_PORT "c"
+start_node $NODE_A_PORT "a" "$NODE_A_IDENTITY"
+start_node $NODE_B_PORT "b" "$NODE_B_IDENTITY"
+start_node $NODE_C_PORT "c" "$NODE_C_IDENTITY"
 green "A、B、C 已启动"
 
 NODE_A_ID=$(grep "Peer ID:" /tmp/np4_dht_a.log | awk '{print $3}')

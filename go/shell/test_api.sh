@@ -5,6 +5,7 @@ set -e
 PORT=4300
 WEB_PORT=8300
 BIN_DIR="$(cd "$(dirname "$0")/.." && pwd)/bin"
+TEST_IDENTITY="/tmp/np4_test_boot_$(basename $0 .sh)_$$"
 PASS=0
 FAIL=0
 
@@ -14,6 +15,7 @@ red()   { echo -e "\033[31m✗ $1\033[0m"; }
 cleanup() {
     [ -n "$PID" ] && kill "$PID" 2>/dev/null
     wait "$PID" 2>/dev/null
+    rm -f "$TEST_IDENTITY" /tmp/np4_boot_$$.log
 }
 trap cleanup EXIT
 
@@ -22,7 +24,7 @@ echo
 
 # 启动节点
 go build -o "$BIN_DIR/bootstrap" ./cmd/bootstrap/ 2>/dev/null
-"$BIN_DIR/bootstrap" start --port $PORT --web $WEB_PORT &
+"$BIN_DIR/bootstrap" start --port $PORT --web $WEB_PORT --identity "$TEST_IDENTITY" > /tmp/np4_boot_$$.log 2>&1 &
 PID=$!
 sleep 2
 

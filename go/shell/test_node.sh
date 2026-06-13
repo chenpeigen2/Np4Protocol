@@ -1,11 +1,14 @@
 #!/bin/bash
 # np4cli 节点功能测试
-set -e
+set +e
 
 BOOTSTRAP_PORT=4200
 NODE_A_PORT=4201
 NODE_B_PORT=4202
 BIN_DIR="$(cd "$(dirname "$0")/.." && pwd)/bin"
+TEST_IDENTITY="/tmp/np4_test_boot_$(basename $0 .sh)_$$"
+NODE_A_IDENTITY="/tmp/np4_test_nodeA_$(basename $0 .sh)_$$"
+NODE_B_IDENTITY="/tmp/np4_test_nodeB_$(basename $0 .sh)_$$"
 PASS=0
 FAIL=0
 
@@ -17,6 +20,7 @@ cleanup() {
     [ -n "$NODE_A_PID" ] && kill "$NODE_A_PID" 2>/dev/null
     [ -n "$NODE_B_PID" ] && kill "$NODE_B_PID" 2>/dev/null
     wait 2>/dev/null
+    rm -f "$TEST_IDENTITY" /tmp/np4_boot_$$.log "$NODE_A_IDENTITY" "$NODE_B_IDENTITY" /tmp/np4_nodeA_$$.log /tmp/np4_nodeB_$$.log
 }
 trap cleanup EXIT
 
@@ -32,11 +36,11 @@ green "构建成功"
 # 启动 bootstrap
 echo
 echo "--- 启动 Bootstrap ---"
-"$BIN_DIR/bootstrap" start --port $BOOTSTRAP_PORT --web 0 &
+"$BIN_DIR/bootstrap" start --port $BOOTSTRAP_PORT --web 0 --identity "$TEST_IDENTITY" > /tmp/np4_boot_$$.log 2>&1 &
 BOOTSTRAP_PID=$!
 sleep 2
 
-BOOTSTRAP_ADDR=$("$BIN_DIR/bootstrap" id --port $BOOTSTRAP_PORT 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $1}')
+BOOTSTRAP_ADDR=$("$BIN_DIR/bootstrap" id --port $BOOTSTRAP_PORT --identity "$TEST_IDENTITY" 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $NF}')
 green "Bootstrap 地址: $BOOTSTRAP_ADDR"
 
 # Test 1: np4cli --help
@@ -63,22 +67,38 @@ else
     FAIL=$((FAIL+1))
 fi
 
-# Test 3: 启动节点 A
+# Test 3: 启动节点 A（后台 chat 模式保持运行）
 echo
 echo "--- 启动节点 A ---"
-"$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_ADDR" id > /dev/null 2>&1
-green "节点 A 创建成功"
+(tail -f /dev/null | "$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_ADDR" --identity "$NODE_A_IDENTITY" chat > /tmp/np4_nodeA_$$.log 2>&1) &
+NODE_A_PID=$!
+sleep 3
+if kill -0 "$NODE_A_PID" 2>/dev/null; then
+    green "节点 A 启动成功"
+    PASS=$((PASS+1))
+else
+    red "节点 A 启动失败"
+    FAIL=$((FAIL+1))
+fi
 
-# Test 4: 启动节点 B
+# Test 4: 启动节点 B（后台 chat 模式保持运行）
 echo
 echo "--- 启动节点 B ---"
-"$BIN_DIR/np4cli" --port $NODE_B_PORT --bootstrap "$BOOTSTRAP_ADDR" id > /dev/null 2>&1
-green "节点 B 创建成功"
+(tail -f /dev/null | "$BIN_DIR/np4cli" --port $NODE_B_PORT --bootstrap "$BOOTSTRAP_ADDR" --identity "$NODE_B_IDENTITY" chat > /tmp/np4_nodeB_$$.log 2>&1) &
+NODE_B_PID=$!
+sleep 3
+if kill -0 "$NODE_B_PID" 2>/dev/null; then
+    green "节点 B 启动成功"
+    PASS=$((PASS+1))
+else
+    red "节点 B 启动失败"
+    FAIL=$((FAIL+1))
+fi
 
 # Test 5: peers 命令
 echo
 echo "--- peers 命令 ---"
-OUTPUT=$("$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_ADDR" peers 2>&1)
+OUTPUT=$("$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_ADDR" --identity "$NODE_A_IDENTITY" peers 2>&1)
 if [ $? -eq 0 ]; then
     green "peers 命令执行成功"
     PASS=$((PASS+1))
@@ -87,11 +107,11 @@ else
     FAIL=$((FAIL+1))
 fi
 
-# Test 6: connect 命令（连接自己测试格式）
+# Test 6: connect 命令（A 连接 B）
 echo
 echo "--- connect 命令 ---"
-NODE_B_ADDR=$("$BIN_DIR/np4cli" --port $NODE_B_PORT id 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $1}')
-OUTPUT=$("$BIN_DIR/np4cli" --port $NODE_A_PORT connect "$NODE_B_ADDR" 2>&1)
+NODE_B_ADDR=$(grep "/ip4/127.0.0.1" /tmp/np4_nodeB_$$.log 2>/dev/null | head -1 | awk '{print $NF}')
+OUTPUT=$("$BIN_DIR/np4cli" --port $NODE_A_PORT --identity "$NODE_A_IDENTITY" connect "$NODE_B_ADDR" 2>&1)
 if echo "$OUTPUT" | grep -q "Connected"; then
     green "连接成功"
     PASS=$((PASS+1))

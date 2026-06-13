@@ -5,6 +5,7 @@ set -e
 PORT=4100
 WEB_PORT=8100
 BIN_DIR="$(cd "$(dirname "$0")/.." && pwd)/bin"
+TEST_IDENTITY="/tmp/np4_test_boot_$(basename $0 .sh)_$$"
 PASS=0
 FAIL=0
 
@@ -14,6 +15,7 @@ red()   { echo -e "\033[31m✗ $1\033[0m"; }
 cleanup() {
     [ -n "$BOOTSTRAP_PID" ] && kill "$BOOTSTRAP_PID" 2>/dev/null
     wait "$BOOTSTRAP_PID" 2>/dev/null
+    rm -f "$TEST_IDENTITY" /tmp/np4_boot_$$.log
 }
 trap cleanup EXIT
 
@@ -46,8 +48,8 @@ fi
 # Test 3: id 命令
 echo
 echo "--- id 命令 ---"
-OUTPUT=$("$BIN_DIR/bootstrap" id --port $PORT 2>&1)
-if echo "$OUTPUT" | grep -q "Peer ID:" && echo "$OUTPUT" | grep -q "Addresses:"; then
+OUTPUT=$("$BIN_DIR/bootstrap" id --port $PORT --identity "$TEST_IDENTITY" 2>&1)
+if echo "$OUTPUT" | grep -q "Peer ID:" && echo "$OUTPUT" | grep -q "Multiaddr:"; then
     green "id 命令输出正确"
     PASS=$((PASS+1))
 else
@@ -58,7 +60,7 @@ fi
 # Test 4: 启动节点
 echo
 echo "--- 启动节点 ---"
-"$BIN_DIR/bootstrap" start --port $PORT --web $WEB_PORT &
+"$BIN_DIR/bootstrap" start --port $PORT --web $WEB_PORT --identity "$TEST_IDENTITY" > /tmp/np4_boot_$$.log 2>&1 &
 BOOTSTRAP_PID=$!
 sleep 2
 

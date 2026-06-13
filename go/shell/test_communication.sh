@@ -7,6 +7,9 @@ WEB_PORT=8500
 NODE_A_PORT=4501
 NODE_B_PORT=4502
 BIN_DIR="$(cd "$(dirname "$0")/.." && pwd)/bin"
+TEST_IDENTITY="/tmp/np4_test_boot_$(basename $0 .sh)_$$"
+NODE_A_IDENTITY="/tmp/np4_test_commA_$(basename $0 .sh)_$$"
+NODE_B_IDENTITY="/tmp/np4_test_commB_$(basename $0 .sh)_$$"
 PASS=0
 FAIL=0
 
@@ -17,7 +20,7 @@ cleanup() {
     for port in $BOOTSTRAP_PORT $NODE_A_PORT $NODE_B_PORT; do
         lsof -ti :$port 2>/dev/null | xargs kill -9 2>/dev/null
     done
-    rm -f /tmp/np4_chat_b.log /tmp/np4_chat_b.fifo
+    rm -f /tmp/np4_chat_b.log /tmp/np4_chat_b.fifo "$TEST_IDENTITY" /tmp/np4_boot_$$.log "$NODE_A_IDENTITY" "$NODE_B_IDENTITY"
 }
 trap cleanup EXIT
 
@@ -39,12 +42,12 @@ sleep 1
 # 启动 Bootstrap
 echo
 echo "--- 启动 Bootstrap ---"
-"$BIN_DIR/bootstrap" start --port $BOOTSTRAP_PORT --web $WEB_PORT &
+"$BIN_DIR/bootstrap" start --port $BOOTSTRAP_PORT --web $WEB_PORT --identity "$TEST_IDENTITY" > /tmp/np4_boot_$$.log 2>&1 &
 BOOTSTRAP_PID=$!
 sleep 2
 green "Bootstrap 启动成功"
 
-BOOTSTRAP_MULTIADDR=$("$BIN_DIR/bootstrap" id --port $BOOTSTRAP_PORT 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $1}')
+BOOTSTRAP_MULTIADDR=$("$BIN_DIR/bootstrap" id --port $BOOTSTRAP_PORT --identity "$TEST_IDENTITY" 2>&1 | grep "/ip4/127.0.0.1" | head -1 | awk '{print $NF}')
 green "Bootstrap: $BOOTSTRAP_MULTIADDR"
 
 # 启动节点 B（使用 fifo 保持输出流）
@@ -52,7 +55,7 @@ echo
 echo "--- 启动节点 B (chat 模式) ---"
 rm -f /tmp/np4_chat_b.fifo
 mkfifo /tmp/np4_chat_b.fifo
-(tail -f /dev/null | "$BIN_DIR/np4cli" --port $NODE_B_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" chat > /tmp/np4_chat_b.fifo 2>&1) &
+(tail -f /dev/null | "$BIN_DIR/np4cli" --port $NODE_B_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" --identity "$NODE_B_IDENTITY" chat > /tmp/np4_chat_b.fifo 2>&1) &
 CHAT_B_PID=$!
 # 后台读取 fifo 到日志文件
 cat /tmp/np4_chat_b.fifo > /tmp/np4_chat_b.log &
@@ -81,14 +84,14 @@ send_msg() {
     # 截断日志（只截断文件，不影响 cat 的读取位置）
     cp /dev/null /tmp/np4_chat_b.log
     sleep 0.5
-    "$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" send --addr "$NODE_B_MULTIADDR" "$NODE_B_ID" "$msg" 2>&1
+    "$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" --identity "$NODE_A_IDENTITY" send --addr "$NODE_B_MULTIADDR" "$NODE_B_ID" "$msg" 2>&1
     sleep 3
 }
 
 # Test 1: 节点 A 连接节点 B
 echo
 echo "--- Test 1: A 连接 B ---"
-OUTPUT=$("$BIN_DIR/np4cli" --port $NODE_A_PORT connect "$NODE_B_MULTIADDR" 2>&1)
+OUTPUT=$("$BIN_DIR/np4cli" --port $NODE_A_PORT --identity "$NODE_A_IDENTITY" connect "$NODE_B_MULTIADDR" 2>&1)
 if echo "$OUTPUT" | grep -q "Connected"; then
     green "A -> B 连接成功"
     PASS=$((PASS+1))
@@ -152,7 +155,7 @@ echo "--- Test 6: 连续发送 3 条消息 ---"
 cp /dev/null /tmp/np4_chat_b.log
 sleep 0.5
 for i in 1 2 3; do
-    "$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" send --addr "$NODE_B_MULTIADDR" "$NODE_B_ID" "msg-$i" 2>&1
+    "$BIN_DIR/np4cli" --port $NODE_A_PORT --bootstrap "$BOOTSTRAP_MULTIADDR" --identity "$NODE_A_IDENTITY" send --addr "$NODE_B_MULTIADDR" "$NODE_B_ID" "msg-$i" 2>&1
 done
 sleep 4
 
