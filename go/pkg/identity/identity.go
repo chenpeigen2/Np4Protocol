@@ -56,7 +56,10 @@ func fromSeed(seed []byte) (*Identity, error) {
 		return nil, fmt.Errorf("convert to libp2p key: %w", err)
 	}
 
-	// Derive X25519 private from ed25519 seed.
+	// Derive X25519 private scalar from the ed25519 seed.
+	// SHA-512 mirrors Ed25519's internal scalar derivation (RFC 8032 §5.1.5);
+	// do NOT simplify to seed[:32] or swap hash — that would leak Ed25519
+	// key structure into the X25519 scalar.
 	ecdhPriv, err := deriveX25519Priv(seed)
 	if err != nil {
 		return nil, err
@@ -74,6 +77,9 @@ func fromSeed(seed []byte) (*Identity, error) {
 }
 
 func deriveX25519Priv(ed25519Seed []byte) ([]byte, error) {
+	if len(ed25519Seed) != ed25519.SeedSize {
+		return nil, fmt.Errorf("deriveX25519Priv: bad seed size %d", len(ed25519Seed))
+	}
 	h := sha512.Sum512(ed25519Seed)
 	scalar := h[:32]
 	// Clamp per RFC 7748 section 5.
