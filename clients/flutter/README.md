@@ -33,6 +33,19 @@ cd clients/flutter
 flutter run -d macos     # 或 windows / linux / <android-device>
 ```
 
+### macOS 构建前提（本机无 Xcode 时）
+
+Flutter 的 macOS 桌面构建必须用完整 Xcode（Command Line Tools 不够）。装好后：
+
+```bash
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+sudo xcodebuild -license accept && sudo xcodebuild -runFirstLaunch   # 或直接打开一次 Xcode
+./tool/setup.sh     # 重跑：会给首次构建生成的 macos/Podfile 接入 Np4Bridge pod（幂等）
+flutter run -d macos --dart-define=NP4_BOOTSTRAP=<multiaddr> --dart-define=NP4_AUTOCONNECT=1
+```
+
+原生 dylib（universal）已由 `build_native.sh` 产出到 `native/macos/`，`macos/Np4Bridge.podspec` 会把它 vendored 进 `.app/Contents/Frameworks`；macOS 沙箱的网络 client/server entitlements 也已在脚手架里开好。
+
 ### 与服务器配对
 
 在公网服务器上跑 `bootstrap start`（bootstrap 现兼任 relay，见 `go/cmd/bootstrap/README.md`），把输出的 multiaddr 填进连接页，hops 用 **1**。两个客户端互相填对方的 Peer ID 即可匿名聊天。
