@@ -64,6 +64,13 @@ const (
 	// Replay window (~3.2 MB of 32-byte keys) and end-to-end message dedup.
 	replayCacheCapacity = 100_000
 	seenMsgCapacity     = 100_000
+
+	// Discovery record TTLs. Short on purpose: a killed node's record must
+	// expire quickly so peer/relay lists reflect live nodes instead of
+	// accumulating corpses (the DHT default is hours). Republish happens at
+	// half-TTL while the process is alive.
+	peerAdvertiseTTL  = 2 * time.Minute
+	relayAdvertiseTTL = 5 * time.Minute
 )
 
 // Node is the local Np4Protocol peer. It owns a libp2p host, an identity, a
@@ -230,7 +237,7 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 			return nil, fmt.Errorf("dht: %w", err)
 		}
 		n.dht = kdht
-		p2p.AdvertiseRendezvous(ctx, kdht, cfg.rendezvous)
+		p2p.AdvertiseRendezvousTTL(ctx, kdht, cfg.rendezvous, relayAdvertiseTTL)
 
 		// A standalone DHT server (seed node) has no onion-path consumers; it
 		// only serves records. Skip the path selector so Send falls back to
@@ -613,11 +620,11 @@ func (n *Node) ServeRelay() error {
 	if err := n.waitForDHTPeers(waitCtx, 1); err != nil {
 		return fmt.Errorf("wait for DHT peers: %w", err)
 	}
-	p2p.AdvertiseRendezvous(n.ctx, n.dht, "np4-relay")
+	p2p.AdvertiseRendezvousTTL(n.ctx, n.dht, "np4-relay", relayAdvertiseTTL)
 	if err := pathsel.PublishKey(n.ctx, n.dht, n.ID(), n.identity.SigningPubKey()); err != nil {
 		return fmt.Errorf("publish key: %w", err)
 	}
-	p2p.AdvertiseRendezvous(n.ctx, n.dht, RendezvousPeers)
+	p2p.AdvertiseRendezvousTTL(n.ctx, n.dht, RendezvousPeers, peerAdvertiseTTL)
 	return nil
 }
 
@@ -640,8 +647,8 @@ func (n *Node) PublishKeys() error {
 		return fmt.Errorf("publish key: %w", err)
 	}
 	// Advertise under the peers rendezvous so ListPeers (client peer pickers)
-	// discovers us. dutil.Advertise keeps republishing until ctx is done.
-	p2p.AdvertiseRendezvous(n.ctx, n.dht, RendezvousPeers)
+	// discovers us. Short TTL + republish: dead nodes vanish within ~2 min.
+	p2p.AdvertiseRendezvousTTL(n.ctx, n.dht, RendezvousPeers, peerAdvertiseTTL)
 	return nil
 }
 

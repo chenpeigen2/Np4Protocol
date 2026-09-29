@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	record "github.com/libp2p/go-libp2p-record"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/discovery"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
@@ -120,6 +122,35 @@ func StartDHT(ctx context.Context, h host.Host, bootstrapPeers []peer.AddrInfo) 
 func AdvertiseRendezvous(ctx context.Context, kademliaDHT *dht.IpfsDHT, rendezvous string) {
 	routingDiscovery := drouting.NewRoutingDiscovery(kademliaDHT)
 	dutil.Advertise(ctx, routingDiscovery, rendezvous)
+}
+
+// AdvertiseRendezvousTTL advertises under rendezvous with an explicit record
+// TTL and keeps republishing, so a node's discovery record dies shortly after
+// its process does — dead nodes drop out of discovery within ~TTL instead of
+// the DHT's multi-hour default.
+//
+// A fresh node has an empty routing table and Advertise fails until a first
+// peer joins, so the loop retries fast until the first success, then settles
+// into a half-TTL republish cadence (records never come within half a TTL of
+// expiring while the process is alive).
+func AdvertiseRendezvousTTL(ctx context.Context, kademliaDHT *dht.IpfsDHT, rendezvous string, ttl time.Duration) {
+	rd := drouting.NewRoutingDiscovery(kademliaDHT)
+	go func() {
+		delay := 2 * time.Second
+		for {
+			attemptCtx, cancel := context.WithTimeout(ctx, ttl)
+			_, err := rd.Advertise(attemptCtx, rendezvous, discovery.TTL(ttl))
+			cancel()
+			if err == nil {
+				delay = ttl / 2
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(delay):
+			}
+		}
+	}()
 }
 
 // AdvertiseRendezvousSync synchronously advertises and waits for the first advertisement to complete.
