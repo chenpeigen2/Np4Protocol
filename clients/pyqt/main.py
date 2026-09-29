@@ -34,9 +34,17 @@ from np4_worker import BridgeWorker
 
 BOOTSTRAP_ENV = os.environ.get("NP4_BOOTSTRAP", "").strip()
 AUTOCONNECT = os.environ.get("NP4_AUTOCONNECT") == "1" and bool(BOOTSTRAP_ENV)
+# Multi-instance / self-test hooks:
+#   NP4_IDENTITY_PATH    per-instance identity file (default: shared app-data path)
+#   NP4_SELFTEST_SEND_TO peer ID — once it appears in the peer list, send one
+#                        test message to it and log the result
+IDENTITY_ENV = os.environ.get("NP4_IDENTITY_PATH", "").strip()
+SELFTEST_TARGET = os.environ.get("NP4_SELFTEST_SEND_TO", "").strip()
 
 
 def default_identity_path() -> str:
+    if IDENTITY_ENV:
+        return IDENTITY_ENV
     base = QStandardPaths.writableLocation(
         QStandardPaths.StandardLocation.AppDataLocation
     )
@@ -194,6 +202,7 @@ class MainWindow(QMainWindow):
         self.resize(640, 560)
         self.worker: BridgeWorker | None = None
         self._chat: ChatPage | None = None
+        self._selftest_sent = False
 
         self.stack = QStackedWidget()
         self.connect_page = ConnectPage(self.start)
@@ -234,6 +243,15 @@ class MainWindow(QMainWindow):
     def _on_peers(self, peers: list) -> None:
         if self._chat is not None:
             self._chat.set_peers(peers)
+        # Self-test: as soon as the target shows up in the real discovery
+        # list, send one message through the app's own send path.
+        if SELFTEST_TARGET and not self._selftest_sent:
+            if any(pid == SELFTEST_TARGET for pid, _ in peers):
+                self._selftest_sent = True
+                text = f"selftest from pid {os.getpid()} via peer list"
+                print(f"[np4] selftest: sending to {SELFTEST_TARGET}", flush=True)
+                if self.worker is not None:
+                    self.worker.send(SELFTEST_TARGET, text)
 
     def _on_state(self, state: str) -> None:
         if self._chat is not None:
