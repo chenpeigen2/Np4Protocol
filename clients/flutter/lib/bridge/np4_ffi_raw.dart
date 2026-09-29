@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 
+import 'package:ffi/ffi.dart';
+
 import 'np4_bridge.dart' show Np4BridgeException;
 
 /// Raw FFI bindings for the four np4bridge symbols (go/cmd/np4bridge).

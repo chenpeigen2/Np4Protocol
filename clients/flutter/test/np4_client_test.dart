@@ -8,11 +8,13 @@ void main() {
   test('Np4Client connects, publishes keys, and round-trips over mix',
       () async {
     final alice = await Np4Client.connect(
-      Np4Config(identityPath: '/tmp/a', bootstrap: '/ip4/1.2.3.4/tcp/1/p2p/x'),
+      const Np4Config(
+          identityPath: '/tmp/a', bootstrap: '/ip4/1.2.3.4/tcp/1/p2p/x'),
       transport: FakeTransport(),
     );
     final bob = await Np4Client.connect(
-      Np4Config(identityPath: '/tmp/b', bootstrap: '/ip4/1.2.3.4/tcp/1/p2p/x'),
+      const Np4Config(
+          identityPath: '/tmp/b', bootstrap: '/ip4/1.2.3.4/tcp/1/p2p/x'),
       transport: FakeTransport(),
     );
 
@@ -34,7 +36,8 @@ void main() {
     // The fake accepts any call; assert publish_keys was issued by sending
     // through a transport wrapper that records methods.
     final client = await Np4Client.connect(
-      Np4Config(identityPath: '/tmp/a', bootstrap: '/ip4/1.2.3.4/tcp/1/p2p/x'),
+      const Np4Config(
+          identityPath: '/tmp/a', bootstrap: '/ip4/1.2.3.4/tcp/1/p2p/x'),
       transport: _RecordingTransport(t, published),
     );
     expect(published, contains('publish_keys'));
@@ -60,7 +63,8 @@ void main() {
     final t = FakeTransport();
     final seen = <Map<String, dynamic>>[];
     final client = await Np4Client.connect(
-      Np4Config(identityPath: '/tmp/a', bootstrap: '/ip4/1.2.3.4/tcp/1/p2p/x'),
+      const Np4Config(
+          identityPath: '/tmp/a', bootstrap: '/ip4/1.2.3.4/tcp/1/p2p/x'),
       transport: _CapturingTransport(t, seen),
     );
     await client.send('FAKE_PEER_1', 'hi');
@@ -68,23 +72,25 @@ void main() {
   });
 }
 
-class _RecordingTransport extends Np4TransportProxy {
+base class _RecordingTransport extends Np4TransportProxy {
   _RecordingTransport(super.inner, this.methods);
   final List<String> methods;
 
   @override
-  Future<void> call(int handle, String method, Map<String, dynamic> args) {
+  Future<Map<String, dynamic>> call(
+      int handle, String method, Map<String, dynamic> args) {
     methods.add(method);
     return super.call(handle, method, args);
   }
 }
 
-class _CapturingTransport extends Np4TransportProxy {
+base class _CapturingTransport extends Np4TransportProxy {
   _CapturingTransport(super.inner, this.calls);
   final List<Map<String, dynamic>> calls;
 
   @override
-  Future<void> call(int handle, String method, Map<String, dynamic> args) {
+  Future<Map<String, dynamic>> call(
+      int handle, String method, Map<String, dynamic> args) {
     if (method == 'send') calls.add(args);
     return super.call(handle, method, args);
   }

@@ -12,19 +12,27 @@ class FakeTransport implements Np4Transport {
   static int _nextHandle = 0;
 
   String _peerId = '';
+  bool _directOnly = false;
 
   @override
   Future<Np4NodeInfo> create(Np4Config config) async {
     final handle = ++_nextHandle;
     _peerId = 'FAKE_PEER_$handle';
+    _directOnly = config.bootstrap.isEmpty;
     _registered.add(_peerId);
     return Np4NodeInfo(handle: handle, peerId: _peerId, addrs: ['/fake/1']);
   }
 
   @override
-  Future<void> call(int handle, String method, Map<String, dynamic> args) async {
+  Future<Map<String, dynamic>> call(
+      int handle, String method, Map<String, dynamic> args) async {
     switch (method) {
       case 'send':
+        // Model the real bridge's anonymity contract: no routing → hard fail.
+        if (_directOnly) {
+          throw Np4BridgeException(
+              'mix unavailable: node not in routed mode');
+        }
         final dest = args['dest'] as String;
         if (!_registered.contains(dest)) {
           throw Np4BridgeException('unknown dest $dest');
@@ -34,10 +42,11 @@ class FakeTransport implements Np4Transport {
           'sender': 'anonymous',
           'content_b64': args['content_b64'] as String,
         });
+        return {};
       case 'publish_keys':
       case 'wait_flushed':
       case 'info':
-        return;
+        return {};
       default:
         throw Np4BridgeException('unknown method $method');
     }

@@ -22,7 +22,7 @@ PLATFORMS="android,windows,macos,linux"
 # --- 1. Platform scaffolding -------------------------------------------------
 if [ ! -d android ] || [ ! -d windows ] || [ ! -d macos ] || [ ! -d linux ]; then
   echo "==> flutter create ($PLATFORMS)"
-  flutter create --project np4_client --org app.np4 --platforms "$PLATFORMS" .
+  flutter create --project-name np4_client --org app.np4 --platforms "$PLATFORMS" .
 fi
 
 # --- 2. Native library -------------------------------------------------------

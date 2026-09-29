@@ -5,6 +5,12 @@ import '../bridge/np4_bridge.dart';
 import '../bridge/np4_ffi.dart';
 import 'chat_screen.dart';
 
+/// Build-time demo/dev hooks (flutter run --dart-define=...):
+///   NP4_BOOTSTRAP=multiaddr  prefills the bootstrap field
+///   NP4_AUTOCONNECT=1        connects immediately after launch
+const _kEnvBootstrap = String.fromEnvironment('NP4_BOOTSTRAP');
+const _kEnvAutoConnect = bool.fromEnvironment('NP4_AUTOCONNECT');
+
 /// First-run screen: point the client at a bootstrap node and join.
 class ConnectScreen extends StatefulWidget {
   const ConnectScreen({super.key});
@@ -18,6 +24,17 @@ class _ConnectScreenState extends State<ConnectScreen> {
   final _hopsCtrl = TextEditingController(text: '1');
   bool _connecting = false;
   String _status = '';
+
+  @override
+  void initState() {
+    super.initState();
+    if (_kEnvBootstrap.isNotEmpty) {
+      _bootstrapCtrl.text = _kEnvBootstrap;
+    }
+    if (_kEnvAutoConnect && _kEnvBootstrap.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _connect());
+    }
+  }
 
   @override
   void dispose() {
@@ -45,6 +62,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
         bootstrap: bootstrap,
         hops: hops,
       ));
+      debugPrint('[np4] connected as ${client.peerId}');
       setState(() => _status = '已连接，正在向 DHT 发布密钥（对方需要它才能寻址你）…');
       // publish_keys already ran inside connect(); give the DHT a moment and
       // hand off. Cold-start: path selection retries up to 25s on first send.

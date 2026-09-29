@@ -53,6 +53,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _onIncoming(Np4Incoming msg) {
+    // Debug builds log delivery so attached tooling (flutter run) can verify
+    // end-to-end flow without touching the UI.
+    debugPrint('[np4] message received from ${msg.sender}: ${msg.content}');
     setState(() {
       _messages.add(_ChatMessage(
         sender: msg.sender,

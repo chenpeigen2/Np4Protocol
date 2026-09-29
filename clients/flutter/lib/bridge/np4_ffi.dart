@@ -81,7 +81,8 @@ class FfiTransport implements Np4Transport {
   }
 
   @override
-  Future<void> call(int handle, String method, Map<String, dynamic> args) =>
+  Future<Map<String, dynamic>> call(
+          int handle, String method, Map<String, dynamic> args) =>
       _request('call', {'handle': handle, 'method': method, 'args': args});
 
   @override

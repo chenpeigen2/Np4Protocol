@@ -12,7 +12,6 @@ android/app/src/main/jniLibs/**/libnp4bridge.h
 build/
 .flutter-plugins
 .flutter-plugins-dependencies
-pubspec.lock
 
 # IDE
 .idea/

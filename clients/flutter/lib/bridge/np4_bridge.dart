@@ -74,7 +74,11 @@ class Np4BridgeException implements Exception {
 /// is an in-memory loopback for tests. UI code only ever sees Np4Client.
 abstract class Np4Transport {
   Future<Np4NodeInfo> create(Np4Config config);
-  Future<void> call(int handle, String method, Map<String, dynamic> args);
+
+  /// Runs one bridge method and returns the parsed result map.
+  Future<Map<String, dynamic>> call(
+      int handle, String method, Map<String, dynamic> args);
+
   Future<void> stop(int handle);
 
   /// Events from all handles owned by this transport. Currently one event
@@ -96,7 +100,8 @@ abstract base class Np4TransportProxy implements Np4Transport {
   Future<Np4NodeInfo> create(Np4Config config) => inner.create(config);
 
   @override
-  Future<void> call(int handle, String method, Map<String, dynamic> args) =>
+  Future<Map<String, dynamic>> call(
+          int handle, String method, Map<String, dynamic> args) =>
       inner.call(handle, method, args);
 
   @override
