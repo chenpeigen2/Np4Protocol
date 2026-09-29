@@ -15,6 +15,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var chatInsecure bool
+
 var chatCmd = &cobra.Command{
 	Use:   "chat",
 	Short: "Enter interactive chat mode",
@@ -26,7 +28,26 @@ var chatCmd = &cobra.Command{
 			fmt.Printf("  %s\n", addr)
 		}
 		fmt.Println()
-		fmt.Println("Commands: peers, connect <multiaddr>, send <peer-id> <msg>, id, help, quit")
+		if chatInsecure {
+			fmt.Println("MODE: INSECURE direct sends (no anonymity).")
+		} else {
+			fmt.Println("MODE: mix routing (onion + batch shuffle).")
+			fmt.Println("NOTE: peers must be online and have published keys; offline = message lost.")
+			// Make ourselves addressable: without this, no peer can build
+			// the final onion layer to us and the chat simply cannot receive.
+			if n.DHT() == nil {
+				fmt.Println("WARNING: no --bootstrap configured; mix sends will hard-fail. Use --insecure or provide --bootstrap.")
+			} else if err := n.PublishKeys(); err != nil {
+				fmt.Printf("WARNING: key publication failed (%v); peers may not reach you.\n", err)
+			} else {
+				fmt.Printf("Keys published — reachable via mix at %s\n", n.ID())
+			}
+		}
+		fmt.Println()
+		fmt.Println("Commands: peers, send <peer-id> <msg>, id, help, quit")
+		if chatInsecure {
+			fmt.Println("          (connect <multiaddr> is only needed in --insecure mode)")
+		}
 		fmt.Println()
 
 		n.OnMessage(func(msg *message.Message) {
@@ -128,11 +149,19 @@ func runChatSend(n *np4Node, parts []string) {
 		fmt.Printf("Invalid peer ID: %v\n", err)
 		return
 	}
+	if chatInsecure {
+		if err := n.SendDirect(pid, []byte(sendParts[1])); err != nil {
+			fmt.Printf("Send failed: %v\n", err)
+			return
+		}
+		fmt.Printf("Sent to %s (WARNING: unprotected direct send, no anonymity)\n", pid)
+		return
+	}
 	if err := n.Send(pid, []byte(sendParts[1])); err != nil {
 		fmt.Printf("Send failed: %v\n", err)
 		return
 	}
-	fmt.Printf("Sent to %s\n", pid)
+	fmt.Printf("Sent (mix) to %s\n", pid)
 }
 
 func printChatHelp() {
@@ -145,5 +174,6 @@ func printChatHelp() {
 }
 
 func init() {
+	chatCmd.Flags().BoolVar(&chatInsecure, "insecure", false, "Use direct sends instead of mix routing (NO anonymity)")
 	rootCmd.AddCommand(chatCmd)
 }

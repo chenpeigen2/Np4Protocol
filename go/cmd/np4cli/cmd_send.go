@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
@@ -10,13 +12,13 @@ import (
 )
 
 var (
-	sendDirect bool
-	sendAddr   string
+	sendInsecure bool
+	sendAddr     string
 )
 
 var sendCmd = &cobra.Command{
 	Use:   "send <peer-id> <message>",
-	Short: "Send a message (through mix by default; --direct bypasses)",
+	Short: "Send a message (through mix by default; --insecure bypasses)",
 	Args:  cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		n := getNode(cmd)
@@ -40,15 +42,21 @@ var sendCmd = &cobra.Command{
 		}
 
 		content := strings.Join(args[1:], " ")
-		if sendDirect {
+		if sendInsecure {
 			if err := n.SendDirect(pid, []byte(content)); err != nil {
-				return fmt.Errorf("send direct failed: %w", err)
+				return fmt.Errorf("send insecure failed: %w", err)
 			}
-			fmt.Printf("Sent (direct) to %s\n", pid)
+			fmt.Printf("Sent to %s (WARNING: unprotected direct send, no anonymity)\n", pid)
 			return nil
 		}
 		if err := n.Send(pid, []byte(content)); err != nil {
 			return fmt.Errorf("send failed: %w", err)
+		}
+		// The packet lives in the entry mix buffer; exiting now would kill it.
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := n.WaitFlushed(flushCtx); err != nil {
+			return fmt.Errorf("flush to first relay: %w", err)
 		}
 		fmt.Printf("Sent (mix, %d hops) to %s\n", hops, pid)
 		return nil
@@ -56,7 +64,7 @@ var sendCmd = &cobra.Command{
 }
 
 func init() {
-	sendCmd.Flags().BoolVar(&sendDirect, "direct", false, "Bypass mix (single-hop direct)")
+	sendCmd.Flags().BoolVar(&sendInsecure, "insecure", false, "Bypass mix (single-hop direct, NO anonymity)")
 	sendCmd.Flags().StringVar(&sendAddr, "addr", "", "Peer multiaddr (connect before sending)")
 	rootCmd.AddCommand(sendCmd)
 }

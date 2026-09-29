@@ -59,6 +59,11 @@ type Decoded struct {
 // Build constructs an onion by encrypting from the last hop down to the first.
 // Innermost layer wraps finalPayload with flagFinal; each outer layer wraps the
 // previous ciphertext with flagRelay + next_hop_peer_id.
+//
+// Layer ciphertexts grow outward by ~65+hopID bytes per hop — that is
+// inherent to nested encryption and cannot be hidden at this level. Wire-level
+// size uniformity (see wire.go) is what hides content size and path length
+// from observers.
 func Build(path []Hop, finalPayload []byte) (*Onion, error) {
 	if len(path) == 0 {
 		return nil, errors.New("empty path")

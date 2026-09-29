@@ -1,10 +1,16 @@
 package p2p
 
 import (
+	"bytes"
 	"context"
+	"encoding/base32"
+	"errors"
+	"fmt"
+	"strings"
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	record "github.com/libp2p/go-libp2p-record"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
@@ -40,22 +46,53 @@ func StartMDNS(h host.Host, serviceTag string, notifee *discoveryNotifee) error 
 	return s.Start()
 }
 
-// acceptAllValidator accepts every record as valid. The libp2p record system
-// already signs records with the publisher's private key, so we don't need
-// additional validation for our ECDH pubkeys stored under /np4/ecdh/*.
-type acceptAllValidator struct{}
+// np4Validator enforces the record↔peer binding for /np4/ecdh/* records.
+//
+// The DHT never verifies record signatures (see routing.go/handlers.go in
+// go-libp2p-kad-dht — Validate is the only integrity checkpoint), so this
+// binding is the ONLY defense against key poisoning: an attacker cannot
+// publish their own key under a victim's peer ID without finding a public
+// key that hashes to the victim's ID.
+//
+// The stored value is the node's ed25519 public key (libp2p-marshaled), same
+// convention as /pk records. Senders convert it to X25519 locally.
+//
+// Note: NamespacedValidator passes the FULL key through to inner validators
+// (it only uses the first segment for dispatch), so `key` here is
+// "/np4/ecdh/<base32(peer-multihash)>". We take everything after the last
+// '/' — base32's alphabet never contains '/'.
+type np4Validator struct{}
 
-func (acceptAllValidator) Validate(key string, value []byte) error { return nil }
-func (acceptAllValidator) Select(key string, values [][]byte) (int, error) {
+func (np4Validator) Validate(key string, value []byte) error {
+	raw, err := base32.StdEncoding.DecodeString(key[strings.LastIndexByte(key, '/')+1:])
+	if err != nil {
+		return fmt.Errorf("np4: key is not valid base32: %w", err)
+	}
+	pk, err := crypto.UnmarshalPublicKey(value)
+	if err != nil {
+		return fmt.Errorf("np4: value is not a libp2p public key: %w", err)
+	}
+	id, err := peer.IDFromPublicKey(pk)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(raw, []byte(id)) {
+		return fmt.Errorf("np4: public key binds to peer %s, wanted %s", id, peer.ID(raw))
+	}
+	return nil
+}
+
+func (np4Validator) Select(key string, values [][]byte) (int, error) {
 	if len(values) == 0 {
-		return 0, nil
+		return 0, errors.New("np4: no values to select")
 	}
 	return 0, nil
 }
 
-// StartDHT creates a DHT instance, registers an accept-all validator for the
-// "np4" namespace (so PutValue/GetValue work for /np4/ecdh/* records), sets
-// server mode so this node stores+serves records, and bootstraps.
+// StartDHT creates a DHT instance, registers the np4 record validator (which
+// enforces the record↔peer binding — the DHT does not verify signatures, so
+// this check is the only defense against key poisoning), sets server mode so
+// this node stores+serves records, and bootstraps.
 //
 // The np4 validator is injected into the DHT's namespaced validator map AFTER
 // construction. The Amino-locked default DHT validates its config to require
@@ -71,7 +108,7 @@ func StartDHT(ctx context.Context, h host.Host, bootstrapPeers []peer.AddrInfo) 
 		return nil, err
 	}
 	if nsVal, ok := kademliaDHT.Validator.(record.NamespacedValidator); ok {
-		nsVal["np4"] = acceptAllValidator{}
+		nsVal["np4"] = np4Validator{}
 	}
 	if err := kademliaDHT.Bootstrap(ctx); err != nil {
 		return nil, err

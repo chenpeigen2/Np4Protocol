@@ -14,9 +14,11 @@ import (
 	"math/big"
 	"time"
 
+	"Np4Protocol/go/pkg/identity"
 	"Np4Protocol/go/pkg/onion"
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
+	ic "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 )
@@ -118,7 +120,7 @@ func (f *DHTFinder) FindRelays(ctx context.Context) ([]PeerInfo, error) {
 
 	var out []PeerInfo
 	for pi := range peerChan {
-		pub, err := f.lookupECDH(ctx, pi.ID)
+		pub, err := f.lookupKey(ctx, pi.ID)
 		if err != nil || len(pub) == 0 {
 			continue
 		}
@@ -127,22 +129,50 @@ func (f *DHTFinder) FindRelays(ctx context.Context) ([]PeerInfo, error) {
 	return out, nil
 }
 
-func (f *DHTFinder) lookupECDH(ctx context.Context, pid peer.ID) ([]byte, error) {
-	key := ecdhKeyPrefix + base32.StdEncoding.EncodeToString([]byte(pid))
-	return f.DHT.GetValue(ctx, key)
+func (f *DHTFinder) lookupKey(ctx context.Context, pid peer.ID) ([]byte, error) {
+	return GetKey(ctx, f.DHT, pid)
 }
 
-// PublishECDH stores a node's own ECDH pubkey in the DHT so other nodes can
-// build onion paths through it. Called by nodes that opt in to relaying.
-func PublishECDH(ctx context.Context, d *dht.IpfsDHT, pid peer.ID, ecdhPub []byte) error {
+// PublishKey stores a node's ed25519 public key in the DHT under
+// /np4/ecdh/<peerID>. The DHT never verifies record signatures, so the
+// validator's IDFromPublicKey-vs-key binding is the ONLY thing preventing
+// poisoning — the stored key must be the publisher's own. Callers pass
+// id.SigningPubKey().
+func PublishKey(ctx context.Context, d *dht.IpfsDHT, pid peer.ID, pubKey ic.PubKey) error {
+	if pubKey == nil {
+		return errors.New("nil public key")
+	}
+	value, err := ic.MarshalPublicKey(pubKey)
+	if err != nil {
+		return err
+	}
 	key := ecdhKeyPrefix + base32.StdEncoding.EncodeToString([]byte(pid))
-	return d.PutValue(ctx, key, ecdhPub)
+	return d.PutValue(ctx, key, value)
 }
 
-// GetECDH reads a peer's published ECDH pubkey from the DHT. Returns the raw
-// bytes (nil on any DHT error or missing key). Used when building an onion
-// path whose final hop is a destination that has published its own key.
-func GetECDH(ctx context.Context, d *dht.IpfsDHT, pid peer.ID) ([]byte, error) {
+// GetKey reads a peer's published ed25519 key from the DHT, verifies the
+// peer-ID binding client-side (defense in depth on top of the validator),
+// and converts it to the X25519 pubkey used for onion layers.
+func GetKey(ctx context.Context, d *dht.IpfsDHT, pid peer.ID) ([]byte, error) {
 	key := ecdhKeyPrefix + base32.StdEncoding.EncodeToString([]byte(pid))
-	return d.GetValue(ctx, key)
+	value, err := d.GetValue(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	pubKey, err := ic.UnmarshalPublicKey(value)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal published key: %w", err)
+	}
+	bound, err := peer.IDFromPublicKey(pubKey)
+	if err != nil {
+		return nil, err
+	}
+	if bound != pid {
+		return nil, fmt.Errorf("published key binds to %s, wanted %s", bound, pid)
+	}
+	raw, err := pubKey.Raw()
+	if err != nil || len(raw) != 32 {
+		return nil, fmt.Errorf("unexpected published key material (len=%d, err=%v)", len(raw), err)
+	}
+	return identity.Ed25519PubToX25519(raw)
 }

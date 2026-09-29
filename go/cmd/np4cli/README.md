@@ -1,110 +1,83 @@
 # np4cli
 
-Np4Protocol P2P 匿名通信客户端。基于 libp2p，使用 Noise 协议加密（X25519 + ChaCha20-Poly1305），支持 DHT 节点发现。
+Np4Protocol P2P 匿名通信客户端。基于 libp2p，使用 Noise 协议加密传输（X25519 + ChaCha20-Poly1305）；消息经**定长 cell + 洋葱分层 + 入口/中继两侧 MixEngine 批量混洗**路由，默认永不回退到明文直连。
 
 ## 构建
 
 ```bash
 cd go
 go build -o bin/np4cli ./cmd/np4cli/
+go build -o bin/bootstrap ./cmd/bootstrap/
 ```
 
 ## 快速开始
 
+最小可用网络 = 1 bootstrap + N 个 relay（N ≥ `--hops`，默认 3）+ 通信双方。
+
 ### 1. 启动 bootstrap 节点
 
 ```bash
-go build -o bin/bootstrap ./cmd/bootstrap/
-./bin/bootstrap -port 4000
-# 输出:
-# Bootstrap node started
-# Peer ID: 12D3KooW...
-# Addresses:
-#   /ip4/127.0.0.1/tcp/4000/p2p/12D3KooW...
+./bin/bootstrap start --port 4000 --web 0 --identity ./boot.id
+# 记录输出中的 Peer ID 和 multiaddr
 ```
 
-### 2. 启动客户端
+### 2. 启动 relays（示例开 3 个，与默认 --hops 3 匹配）
 
 ```bash
-# 终端 A
-./bin/np4cli --port 4002 --bootstrap /ip4/127.0.0.1/tcp/4000/p2p/12D3KooW... chat
+BOOT=/ip4/127.0.0.1/tcp/4000/p2p/<boot-peer-id>
+./bin/np4cli --port 4001 --bootstrap $BOOT --identity ./ra.id relay
+./bin/np4cli --port 4002 --bootstrap $BOOT --identity ./rb.id relay
+./bin/np4cli --port 4003 --bootstrap $BOOT --identity ./rc.id relay
+```
+
+### 3. 双方进入 chat
+
+```bash
+# 终端 A（chat 启动时会自动向 DHT 发布 key，使自己可被寻址）
+./bin/np4cli --port 4004 --bootstrap $BOOT --identity ./a.id chat
 
 # 终端 B
-./bin/np4cli --port 4003 --bootstrap /ip4/127.0.0.1/tcp/4000/p2p/12D3KooW... chat
+./bin/np4cli --port 4005 --bootstrap $BOOT --identity ./b.id chat
 ```
 
-### 3. 发现节点并聊天
+### 4. 发送
 
-终端 A 中:
+终端 A 中（用 B 的 Peer ID）：
 ```
-> peers
-  12D3KooW...  [/ip4/127.0.0.1/tcp/4003/...]
-发现 1 个节点
-
-> connect /ip4/127.0.0.1/tcp/4003/p2p/12D3KooW...
-已连接到 12D3KooW...
-
-> send 12D3KooW... 来自 A 的消息
-已发送到 12D3KooW...
+> send 12D3KooW... 你好，B
+Sent (mix) to 12D3KooW...
 ```
 
-终端 B 中:
+终端 B 中：
 ```
-[14:32:01] 12D3KooW...: 来自 A 的消息
->
+[14:32:01] anonymous: 你好，B
 ```
+
+注意显示的发送者是 `anonymous`——这是匿名性的体现。
 
 ## 子命令
 
 | 命令 | 说明 |
 |------|------|
 | `np4cli id` | 显示本节点的 Peer ID 和地址 |
-| `np4cli peers` | 通过 DHT 发现在线节点 |
-| `np4cli connect <multiaddr>` | 连接到指定节点 |
-| `np4cli send <peer-id> <消息>` | 发送消息 |
-| `np4cli chat` | 进入交互式聊天模式 |
+| `np4cli peers` | 通过 DHT rendezvous 发现在线节点 |
+| `np4cli relay` | 作为 mix relay 运行（在 DHT 广告，参与路径选择） |
+| `np4cli send <peer-id> <消息>` | 走 mix 发送；`--insecure` 显式直连（**无匿名性**，输出有 WARNING） |
+| `np4cli chat` | 交互式聊天；mix 模式自动发布 key；`--insecure` 直连模式 |
 
 ## 全局参数
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--port` | `0`（随机） | TCP 监听端口 |
-| `--bootstrap` | 无 | Bootstrap 节点的 multiaddr（启用 DHT 发现） |
-| `--rendezvous` | `np4-network` | DHT rendezvous 字符串，用于节点发现 |
+| `--bootstrap` | 无 | Bootstrap 节点的 multiaddr（启用 DHT；**mix 模式必填**） |
+| `--hops` | `3` | 洋葱路径的中间 relay 数（需 ≤ 在线 relay 数） |
+| `--rendezvous` | `np4-network` | DHT rendezvous 字符串 |
+| `--identity` | `~/.np4/identity` | 持久身份文件 |
 
-## 交互模式命令
+## 语义与限制（重要）
 
-进入 `chat` 模式后可用的命令：
-
-| 命令 | 说明 |
-|------|------|
-| `peers` | 发现在线节点 |
-| `connect <multiaddr>` | 连接到节点 |
-| `send <peer-id> <消息>` | 发送消息 |
-| `id` | 显示本节点信息 |
-| `help` | 显示帮助 |
-| `quit` / `exit` | 退出 |
-
-## 架构
-
-```
-np4cli (cobra CLI)
-  └── np4.Node
-        ├── libp2p Host（TCP + Noise 加密）
-        ├── Kademlia DHT（节点发现）
-        ├── Stream 处理器（/np4/message/1.0.0）
-        └── MessageBus（消息发布/订阅）
-```
-
-所有连接通过 libp2p 的 Noise 协议自动加密（X25519 密钥交换 + ChaCha20-Poly1305）。节点发现使用 Kademlia DHT，通过 rendezvous 字符串标识同一网络。
-
-## Multiaddr 格式
-
-libp2p 使用 multiaddr 表示网络地址：
-
-```
-/ip4/127.0.0.1/tcp/4000/p2p/12D3KooW...
-└─ IP ─┘          └端口┘    └─ Peer ID ─┘
-```
-
-`id` 命令会输出完整的 multiaddr，用于 `connect` 命令和 `--bootstrap` 参数。
+- **离线即丢**：对方不在线或未完成 key 发布 → 消息丢失（无 presence、无离线队列）。
+- **无送达保证**：`Send` 返回 nil 仅表示"已进入 mix"（已交给第一跳 relay），端到端 ACK 是 [v2] 特性。
+- **冷启动延迟**：新节点加入后 DHT 路由表需要数秒预热；路径选择会自动重试（最长 25s）。
+- 节点发现使用 Kademlia DHT；relay 发现使用 `np4-relay` rendezvous。

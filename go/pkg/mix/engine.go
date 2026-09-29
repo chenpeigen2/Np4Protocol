@@ -88,6 +88,13 @@ func (m *MixEngine[T]) Close() error {
 	return nil
 }
 
+// Pending reports the number of buffered messages not yet flushed.
+func (m *MixEngine[T]) Pending() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.buffer)
+}
+
 // flushLocked shuffles and dispatches the current buffer. Caller must hold m.mu.
 // onFlush is called synchronously so callers can coordinate shutdown.
 func (m *MixEngine[T]) flushLocked() {

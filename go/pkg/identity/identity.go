@@ -19,6 +19,7 @@ const ecdhPubSize = 32
 
 type Identity struct {
 	priv     crypto.PrivKey
+	signPub  []byte // raw ed25519 public key (32 bytes)
 	ecdhPriv []byte // X25519 private (derived from ed25519 seed)
 	ecdhPub  []byte // X25519 public
 }
@@ -81,6 +82,7 @@ func fromSeed(seed []byte) (*Identity, error) {
 
 	return &Identity{
 		priv:     libp2pPriv,
+		signPub:  append([]byte(nil), edPriv.Public().(ed25519.PublicKey)...),
 		ecdhPriv: ecdhPriv,
 		ecdhPub:  ecdhPub,
 	}, nil
@@ -105,6 +107,19 @@ func (i *Identity) PeerID() peer.ID {
 }
 
 func (i *Identity) PrivKey() crypto.PrivKey { return i.priv }
+
+// SigningPub returns the raw 32-byte ed25519 public key. It is what gets
+// published to the DHT so peers can (a) verify the peer-ID binding and (b)
+// derive our X25519 pubkey via Ed25519PubToX25519.
+func (i *Identity) SigningPub() []byte {
+	out := make([]byte, len(i.signPub))
+	copy(out, i.signPub)
+	return out
+}
+
+// SigningPubKey returns the libp2p public key wrapper, for publishing the
+// marshaled form to the DHT (mirrors how /pk records store keys).
+func (i *Identity) SigningPubKey() crypto.PubKey { return i.priv.GetPublic() }
 
 func (i *Identity) ECDHPub() []byte {
 	out := make([]byte, ecdhPubSize)

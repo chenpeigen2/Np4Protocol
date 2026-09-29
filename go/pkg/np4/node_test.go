@@ -36,7 +36,7 @@ func TestNodeSendReceive(t *testing.T) {
 		mu.Unlock()
 	})
 
-	err = nodeA.Send(nodeB.ID(), []byte("hello"))
+	err = nodeA.SendDirect(nodeB.ID(), []byte("hello"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,8 +72,8 @@ func TestNodeBidirectional(t *testing.T) {
 		mu.Unlock()
 	})
 
-	nodeA.Send(nodeB.ID(), []byte("A->B"))
-	nodeB.Send(nodeA.ID(), []byte("B->A"))
+	nodeA.SendDirect(nodeB.ID(), []byte("A->B"))
+	nodeB.SendDirect(nodeA.ID(), []byte("B->A"))
 
 	time.Sleep(200 * time.Millisecond)
 
@@ -113,8 +113,8 @@ func TestFullP2PFlow(t *testing.T) {
 		mu.Unlock()
 	})
 
-	nodeA.Send(nodeB.ID(), []byte("hello B"))
-	nodeA.Send(nodeC.ID(), []byte("hello C"))
+	nodeA.SendDirect(nodeB.ID(), []byte("hello B"))
+	nodeA.SendDirect(nodeC.ID(), []byte("hello C"))
 
 	time.Sleep(300 * time.Millisecond)
 
