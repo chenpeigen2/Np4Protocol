@@ -30,12 +30,14 @@ protoc --go_out=. --go_opt=paths=source_relative ../proto/np4.proto
 ## Native Bridge & Flutter Client
 
 `go/cmd/np4bridge` builds the np4 stack into a native library (4 exported
-symbols, JSON-in/JSON-out) for the Flutter client in `clients/flutter`
-(Windows/macOS/Linux/Android — iOS deferred). Bridge logic lives in
+symbols, JSON-in/JSON-out) used by the Flutter client in `clients/flutter`
+(Windows/macOS/Linux/Android — iOS deferred) and the PyQt6 desktop client in
+`clients/pyqt` (ctypes, same library). Bridge logic lives in
 `go/pkg/bridge` (pure Go, unit-tested); events are polled, never pushed via
 callbacks. Build + app setup: `clients/flutter/tool/build_native.sh` and
 `clients/flutter/tool/setup.sh`. Android builds need `-ldflags=-checklinkname=0`
-(go-libp2p's anet dependency).
+(go-libp2p's anet dependency); zig cc cross-compiles the Windows DLL and
+Linux .so.
 
 ## Architecture
 

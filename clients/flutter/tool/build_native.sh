@@ -84,13 +84,18 @@ build_macos() {
 }
 
 build_windows() {
-  if ! command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-    echo "skip windows: no x86_64-w64-mingw32-gcc (brew install mingw-w64)"; return 0
-  fi
   mkdir -p "$NATIVE_DIR/windows"
-  echo "windows: x86_64"
-  (cd "$GO_DIR" && env GOOS=windows GOARCH=amd64 CGO_ENABLED=1 \
-    CC=x86_64-w64-mingw32-gcc go build -buildmode=c-shared -o "$NATIVE_DIR/windows/np4bridge.dll" "$BRIDGE_PKG")
+  if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
+    echo "windows: x86_64 via mingw-w64"
+    (cd "$GO_DIR" && env GOOS=windows GOARCH=amd64 CGO_ENABLED=1 \
+      CC=x86_64-w64-mingw32-gcc go build -buildmode=c-shared -o "$NATIVE_DIR/windows/np4bridge.dll" "$BRIDGE_PKG")
+  elif command -v zig >/dev/null 2>&1; then
+    echo "windows: x86_64 via zig cc"
+    (cd "$GO_DIR" && env GOOS=windows GOARCH=amd64 CGO_ENABLED=1 \
+      CC="zig cc -target x86_64-windows-gnu" go build -buildmode=c-shared -o "$NATIVE_DIR/windows/np4bridge.dll" "$BRIDGE_PKG")
+  else
+    echo "skip windows: no mingw-w64 or zig (brew install mingw-w64 / zig)"; return 0
+  fi
   echo "windows OK: $NATIVE_DIR/windows/np4bridge.dll"
 }
 
