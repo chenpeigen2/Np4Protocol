@@ -55,6 +55,10 @@ cp -f native/macos/libnp4bridge.dylib macos/native/libnp4bridge.dylib
 if [ -f macos/Podfile ] && ! grep -q "pod 'Np4Bridge'" macos/Podfile; then
   # Insert inside the Runner target block, before the flutter pod helper.
   sed -i '' "s/target 'Runner' do/target 'Runner' do\\n  pod 'Np4Bridge', :path => '.'/" macos/Podfile
+elif [ ! -f macos/Podfile ]; then
+  echo "note: macos/Podfile does not exist yet (newer flutter creates it on"
+  echo "      first macOS build). After 'flutter build macos --config-only',"
+  echo "      re-run setup.sh to wire in the Np4Bridge pod."
 fi
 
 # macOS sandbox: the app must be allowed to listen (DHT/relay) and dial.
