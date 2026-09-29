@@ -617,6 +617,7 @@ func (n *Node) ServeRelay() error {
 	if err := pathsel.PublishKey(n.ctx, n.dht, n.ID(), n.identity.SigningPubKey()); err != nil {
 		return fmt.Errorf("publish key: %w", err)
 	}
+	p2p.AdvertiseRendezvous(n.ctx, n.dht, RendezvousPeers)
 	return nil
 }
 
@@ -638,6 +639,9 @@ func (n *Node) PublishKeys() error {
 	if err := pathsel.PublishKey(n.ctx, n.dht, n.ID(), n.identity.SigningPubKey()); err != nil {
 		return fmt.Errorf("publish key: %w", err)
 	}
+	// Advertise under the peers rendezvous so ListPeers (client peer pickers)
+	// discovers us. dutil.Advertise keeps republishing until ctx is done.
+	p2p.AdvertiseRendezvous(n.ctx, n.dht, RendezvousPeers)
 	return nil
 }
 
@@ -667,6 +671,42 @@ func (n *Node) Close() error {
 
 // Stop aliases Close for backward compatibility with existing callers.
 func (n *Node) Stop() { _ = n.Close() }
+
+// RendezvousPeers is the rendezvous under which every key-publishing node
+// advertises itself, making the set of addressable peers discoverable via
+// ListPeers. Relays additionally advertise the np4-relay rendezvous for path
+// selection.
+const RendezvousPeers = "np4-peers"
+
+// ListPeers returns the addressable peers discovered via the np4-peers
+// rendezvous, excluding self. A peer is only listed when its published key
+// verifies against the DHT's peer-ID binding — the same check Send relies on
+// — so every entry is reachable through the mix. Addresses ride along for
+// debugging and direct-mode callers.
+func (n *Node) ListPeers(ctx context.Context) ([]pathsel.PeerInfo, error) {
+	if n.dht == nil {
+		return nil, errors.New("DHT not initialized")
+	}
+	peerChan, err := p2p.FindPeers(ctx, n.dht, RendezvousPeers)
+	if err != nil {
+		return nil, fmt.Errorf("find peers: %w", err)
+	}
+	var out []pathsel.PeerInfo
+	for pi := range peerChan {
+		if pi.ID == n.ID() {
+			continue
+		}
+		if _, err := pathsel.GetKey(ctx, n.dht, pi.ID); err != nil {
+			continue // no key yet, stale record, or invalid binding
+		}
+		addrs := make([]string, 0, len(pi.Addrs))
+		for _, a := range pi.Addrs {
+			addrs = append(addrs, a.String())
+		}
+		out = append(out, pathsel.PeerInfo{ID: pi.ID, Addrs: addrs})
+	}
+	return out, nil
+}
 
 // FindPeers wraps p2p.FindPeers for the CLI's `peers` command.
 func (n *Node) FindPeers(ctx context.Context, rendezvous string) (<-chan peer.AddrInfo, error) {

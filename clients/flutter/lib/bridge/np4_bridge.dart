@@ -114,6 +114,14 @@ abstract base class Np4TransportProxy implements Np4Transport {
   Future<void> dispose() => inner.dispose();
 }
 
+/// A discoverable, mix-addressable peer (published key verified server-side).
+class PeerEntry {
+  PeerEntry({required this.peerId, required this.addrs});
+
+  final String peerId;
+  final List<String> addrs;
+}
+
 /// High-level client for one np4 node. Mix sends only — there is no direct
 /// fallback here, matching the protocol's hard-fail semantics.
 class Np4Client {
@@ -157,6 +165,20 @@ class Np4Client {
   /// the first relay. One-shot command flows should call this before exit.
   Future<void> waitFlushed({int timeoutMs = 30000}) =>
       _transport.call(_handle, 'wait_flushed', {'timeout_ms': timeoutMs});
+
+  /// Addressable peers via the np4-peers rendezvous, self excluded. Every
+  /// entry's published key has been verified against the peer-ID binding, so
+  /// each one is sendable. Refresh periodically for liveness.
+  Future<List<PeerEntry>> listPeers() async {
+    final res = await _transport.call(_handle, 'list_peers', {});
+    final raw = res['peers'] as List? ?? [];
+    return raw
+        .map((p) => PeerEntry(
+              peerId: (p as Map)['peer_id'] as String,
+              addrs: List<String>.from(p['addrs'] as List? ?? []),
+            ))
+        .toList();
+  }
 
   Future<Np4NodeInfo> info() async {
     final res = await _transport.call(_handle, 'info', {});

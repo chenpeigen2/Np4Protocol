@@ -14,6 +14,7 @@ from pathlib import Path
 from PyQt6.QtCore import QStandardPaths, Qt
 from PyQt6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -105,9 +106,10 @@ class ConnectPage(QWidget):
 
 
 class ChatPage(QWidget):
-    def __init__(self, peer_id: str, send_callable) -> None:
+    def __init__(self, peer_id: str, send_callable, refresh_callable) -> None:
         super().__init__()
         self._send_callable = send_callable
+        self._refresh_callable = refresh_callable
 
         layout = QVBoxLayout(self)
 
@@ -129,9 +131,20 @@ class ChatPage(QWidget):
         layout.addWidget(self.messages, 1)
 
         dest_row = QHBoxLayout()
-        dest_row.addWidget(QLabel("对方 Peer ID"))
-        self.dest = QLineEdit()
+        dest_row.addWidget(QLabel("对方"))
+        self.dest = QComboBox()
+        self.dest.setEditable(True)
+        self.dest.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.dest.setMinimumContentsLength(26)
+        self.dest.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
         dest_row.addWidget(self.dest, 1)
+        refresh_btn = QPushButton("⟳")
+        refresh_btn.setFixedWidth(40)
+        refresh_btn.setToolTip("刷新在线节点列表")
+        refresh_btn.clicked.connect(self._refresh_callable)
+        dest_row.addWidget(refresh_btn)
         layout.addLayout(dest_row)
 
         input_row = QHBoxLayout()
@@ -145,7 +158,7 @@ class ChatPage(QWidget):
         layout.addLayout(input_row)
 
     def try_send(self) -> None:
-        dest = self.dest.text().strip()
+        dest = self.dest.currentText().strip()
         text = self.input.toPlainText().strip()
         if not dest or not text:
             return
@@ -153,6 +166,15 @@ class ChatPage(QWidget):
 
     def mark_online(self, state: str) -> None:
         self.state.setText(state)
+
+    def set_peers(self, peers: list) -> None:
+        current = self.dest.currentText().strip()
+        self.dest.clear()
+        for peer_id, _addrs in peers:
+            self.dest.addItem(peer_id)
+        if current:
+            # Keep a manually typed or previously selected destination.
+            self.dest.setCurrentText(current)
 
     def add_incoming(self, sender: str, content: str) -> None:
         self.messages.addItem(QListWidgetItem(f"{content}\n{_stamp()} · {sender}"))
@@ -194,15 +216,24 @@ class MainWindow(QMainWindow):
         self.worker.state_changed.connect(self._on_state)
         self.worker.message_received.connect(self._on_message)
         self.worker.send_done.connect(self._on_send_done)
+        self.worker.peers_ready.connect(self._on_peers)
         self.worker.failed.connect(self._on_failed)
         self.worker.start()
 
     def _on_node_ready(self, node: dict) -> None:
         peer_id = node["peer_id"]
         print(f"[np4] connected as {peer_id}", flush=True)
-        self._chat = ChatPage(peer_id, send_callable=self.worker.send)
+        self._chat = ChatPage(
+            peer_id,
+            send_callable=self.worker.send,
+            refresh_callable=self.worker.refresh_peers,
+        )
         self.stack.addWidget(self._chat)
         self.stack.setCurrentWidget(self._chat)
+
+    def _on_peers(self, peers: list) -> None:
+        if self._chat is not None:
+            self._chat.set_peers(peers)
 
     def _on_state(self, state: str) -> None:
         if self._chat is not None:

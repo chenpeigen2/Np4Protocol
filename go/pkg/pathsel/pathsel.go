@@ -27,10 +27,12 @@ import (
 // than the requested hop count.
 var ErrNotEnoughRelays = errors.New("not enough relays available")
 
-// PeerInfo is the minimal info needed to build an onion Hop.
+// PeerInfo is the minimal info needed to build an onion Hop. Addrs is
+// optional metadata (used by peer-list features; path selection ignores it).
 type PeerInfo struct {
 	ID      peer.ID
 	ECDHPub []byte
+	Addrs   []string
 }
 
 // Finder abstracts relay discovery so the Selector can be tested without a

@@ -31,7 +31,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scrollCtrl = ScrollController();
   final _messages = <_ChatMessage>[];
   final _destCtrl = TextEditingController();
+  final _peers = <PeerEntry>[];
   StreamSubscription<Np4Incoming>? _sub;
+  Timer? _peersTimer;
   bool _sending = false;
 
   @override
@@ -40,10 +42,28 @@ class _ChatScreenState extends State<ChatScreen> {
     _sub = widget.client.messages.listen(_onIncoming, onError: (Object e) {
       _toast('接收异常：$e');
     });
+    _refreshPeers();
+    // Peer liveness: discovery records churn as nodes join and leave.
+    _peersTimer = Timer.periodic(
+        const Duration(seconds: 30), (_) => _refreshPeers());
+  }
+
+  Future<void> _refreshPeers() async {
+    try {
+      final peers = await widget.client.listPeers();
+      if (!mounted) return;
+      setState(() => _peers
+        ..clear()
+        ..addAll(peers));
+      debugPrint('[np4] peers online: ${_peers.length}');
+    } catch (_) {
+      // Transient DHT state; the next refresh retries.
+    }
   }
 
   @override
   void dispose() {
+    _peersTimer?.cancel();
     _sub?.cancel();
     _inputCtrl.dispose();
     _destCtrl.dispose();
@@ -163,13 +183,41 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-            child: TextField(
-              controller: _destCtrl,
-              decoration: const InputDecoration(
-                labelText: '对方的 Peer ID',
-                isDense: true,
-                border: OutlineInputBorder(),
-              ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _destCtrl,
+                    decoration: const InputDecoration(
+                      labelText: '对方的 Peer ID（可下拉选择在线节点）',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  tooltip: '刷新在线节点',
+                  onPressed: _refreshPeers,
+                ),
+                DropdownButton<String>(
+                  hint: const Text('在线节点'),
+                  items: _peers
+                      .map((p) => DropdownMenuItem<String>(
+                            value: p.peerId,
+                            child: Text(
+                              '${p.peerId.substring(0, 18)}…',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ))
+                      .toList(),
+                  onChanged: (id) {
+                    if (id != null) {
+                      setState(() => _destCtrl.text = id);
+                    }
+                  },
+                ),
+              ],
             ),
           ),
           Expanded(

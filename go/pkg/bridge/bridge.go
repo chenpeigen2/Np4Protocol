@@ -206,6 +206,22 @@ func (m *Manager) Call(id int64, req []byte) (map[string]any, error) {
 		events, dropped := h.events.drain()
 		return map[string]any{"events": events, "dropped": dropped}, nil
 
+	case "list_peers":
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		peers, err := h.node.ListPeers(ctx)
+		if err != nil {
+			return nil, err
+		}
+		list := make([]map[string]any, 0, len(peers))
+		for _, p := range peers {
+			list = append(list, map[string]any{
+				"peer_id": p.ID.String(),
+				"addrs":   p.Addrs,
+			})
+		}
+		return map[string]any{"peers": list}, nil
+
 	default:
 		return nil, fmt.Errorf("bridge: unknown method %q", r.Method)
 	}

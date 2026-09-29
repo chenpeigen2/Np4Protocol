@@ -9,12 +9,14 @@ from __future__ import annotations
 import base64
 import queue
 import threading
+import time
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from np4_bridge import Bridge, Np4BridgeError, decode_event
 
 POLL_MS = 25
+PEERS_REFRESH_S = 30
 
 
 class BridgeWorker(QThread):
@@ -22,6 +24,7 @@ class BridgeWorker(QThread):
     state_changed = pyqtSignal(str)
     message_received = pyqtSignal(str, str)  # sender, content
     send_done = pyqtSignal(str)  # error text, empty on success
+    peers_ready = pyqtSignal(list)  # [(peer_id, addrs)]
     failed = pyqtSignal(str)
 
     def __init__(self, config: dict, parent=None) -> None:
@@ -32,6 +35,9 @@ class BridgeWorker(QThread):
 
     def send(self, dest: str, text: str) -> None:
         self._requests.put(("send", (dest, text)))
+
+    def refresh_peers(self) -> None:
+        self._requests.put(("refresh_peers", ("", "")))
 
     def shutdown(self) -> None:
         self._stop.set()
@@ -49,6 +55,8 @@ class BridgeWorker(QThread):
             self.state_changed.emit("正在向 DHT 发布密钥…")
             bridge.call(handle, "publish_keys")
             self.state_changed.emit("在线（匿名模式，尽力送达）")
+            self._refresh_peers(bridge, handle)
+            last_peers = time.monotonic()
             while not self._stop.is_set():
                 try:
                     kind, (dest, text) = self._requests.get_nowait()
@@ -61,11 +69,26 @@ class BridgeWorker(QThread):
                         self.send_done.emit("")
                     except Np4BridgeError as e:
                         self.send_done.emit(str(e))
+                elif kind == "refresh_peers":
+                    self._refresh_peers(bridge, handle)
+                    last_peers = time.monotonic()
                 events, _dropped = bridge.poll(handle)
                 for ev in events:
                     sender, content = decode_event(ev)
                     self.message_received.emit(sender, content)
+                if time.monotonic() - last_peers > PEERS_REFRESH_S:
+                    self._refresh_peers(bridge, handle)
+                    last_peers = time.monotonic()
                 self.msleep(POLL_MS)
             bridge.stop(handle)
         except Np4BridgeError as e:
             self.failed.emit(str(e))
+
+    def _refresh_peers(self, bridge: Bridge, handle: int) -> None:
+        try:
+            res = bridge.call(handle, "list_peers")
+        except Np4BridgeError:
+            return
+        peers = [(p["peer_id"], p.get("addrs", [])) for p in res.get("peers", [])]
+        print(f"[np4] peers online: {len(peers)}", flush=True)
+        self.peers_ready.emit(peers)
