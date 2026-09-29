@@ -84,7 +84,7 @@ layer_ciphertext = eph_pub(32) ‖ nonce(12) ‖ ChaCha20-Poly1305(flag ‖ rout
 
 - **Client**：发送/接收；需 `PublishKeys` 使他人可寻址。
 - **Relay**：`ServeRelay` 广告 + 运行 relay 侧 MixEngine（10 条 / 200ms）。
-- **Bootstrap**：独立 DHT server（种子节点）。
+- **Bootstrap**：独立 DHT server（种子节点）**兼任 mix relay**（单服务器部署模式）。客户端对它的连接是出站的，最后一跳复用该既有连接送达——NAT 后的客户端无需公网 IP 即可接收；单 relay 时客户端 `--hops 1`。信任边界：全路径唯一 relay 时，运营者可见全部时序（等价代理模型，见威胁模型两层声明）。
 
 ## 消息类型
 

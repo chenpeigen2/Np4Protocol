@@ -12,6 +12,22 @@ go build -o bin/bootstrap ./cmd/bootstrap/
 
 ## 快速开始
 
+### 单服务器模式（bootstrap 兼任 relay，最小网络）
+
+bootstrap 自此版本起同时作为 mix relay：所有流量经它分发，客户端只需出站连接它（NAT 后无需公网 IP）。此模式下匿名性完全取决于对 bootstrap 运营者的信任（见 bootstrap README 的信任边界）。
+
+```bash
+# 1. 公网服务器上启动 bootstrap（兼任唯一 relay）
+./bin/bootstrap start --port 4000 --identity ./boot.id
+# 记录输出中的 multiaddr；云服务器需把内网 IP 换成公网 IP
+
+# 2. 双方进入 chat（--hops 1：唯一的 relay 就是 bootstrap）
+./bin/np4cli --port 4004 --bootstrap $BOOT --hops 1 --identity ./a.id chat
+./bin/np4cli --port 4005 --bootstrap $BOOT --hops 1 --identity ./b.id chat
+```
+
+### 多 relay 模式（匿名性更好）
+
 最小可用网络 = 1 bootstrap + N 个 relay（N ≥ `--hops`，默认 3）+ 通信双方。
 
 ### 1. 启动 bootstrap 节点
@@ -71,7 +87,7 @@ Sent (mix) to 12D3KooW...
 |------|--------|------|
 | `--port` | `0`（随机） | TCP 监听端口 |
 | `--bootstrap` | 无 | Bootstrap 节点的 multiaddr（启用 DHT；**mix 模式必填**） |
-| `--hops` | `3` | 洋葱路径的中间 relay 数（需 ≤ 在线 relay 数） |
+| `--hops` | `3` | 洋葱路径的中间 relay 数（需 ≤ 在线 relay 数；bootstrap 兼任 relay 时算一个） |
 | `--rendezvous` | `np4-network` | DHT rendezvous 字符串 |
 | `--identity` | `~/.np4/identity` | 持久身份文件 |
 

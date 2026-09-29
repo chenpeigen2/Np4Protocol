@@ -331,6 +331,9 @@ func (n *Node) Send(dest peer.ID, content []byte) error {
 	}
 	path, err := n.pickPath(n.ctx, dest)
 	if err != nil {
+		if errors.Is(err, pathsel.ErrNotEnoughRelays) {
+			return fmt.Errorf("mix path selection failed: %w (reduce --hops or run more relays)", err)
+		}
 		return fmt.Errorf("mix path selection failed: %w", err)
 	}
 	destPub, err := n.lookupDestPub(dest)

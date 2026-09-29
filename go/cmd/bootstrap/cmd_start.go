@@ -1,23 +1,20 @@
 package main
 
 import (
-	"Np4Protocol/go/pkg/identity"
-	"Np4Protocol/go/pkg/p2p"
-	"Np4Protocol/go/pkg/pathsel"
 	"context"
 	"embed"
 	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"net/http"
-	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"Np4Protocol/go/pkg/np4"
+	"Np4Protocol/go/pkg/pathsel"
+
 	"github.com/gin-gonic/gin"
-	dht "github.com/libp2p/go-libp2p-kad-dht"
-	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/spf13/cobra"
 )
 
@@ -32,51 +29,70 @@ var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the bootstrap node",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		id, err := identity.LoadOrCreate(identityPath)
-		if err != nil {
-			return fmt.Errorf("load identity: %w", err)
-		}
-		h, err := p2p.NewHostWithIdentity(id, port)
-		if err != nil {
-			return fmt.Errorf("failed to create host: %w", err)
-		}
-		defer h.Close()
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
 
-		ctx := context.Background()
-		dhtInstance, err := p2p.StartDHT(ctx, h, nil) // nil bootstrap peers — this IS the bootstrap
+		// The bootstrap is a full np4 node in DHT-server mode: it seeds the
+		// DHT AND relays onion traffic. Every client holds an outbound
+		// connection to it, so the last onion hop to a NAT'd client rides an
+		// already-established connection instead of an impossible inbound
+		// dial. Single-relay deployments pair with client --hops 1.
+		node, err := np4.NewNode(port,
+			np4.WithIdentity(identityPath),
+			np4.WithDHTServer(),
+		)
 		if err != nil {
-			return fmt.Errorf("failed to create DHT: %w", err)
+			return fmt.Errorf("bootstrap node: %w", err)
 		}
-		defer dhtInstance.Close()
+		defer node.Close()
 
 		startTime = time.Now()
 
-		fmt.Println("Bootstrap node started")
-		fmt.Printf("Peer ID: %s\n", h.ID())
+		fmt.Println("Bootstrap node started (DHT seed + mix relay)")
+		fmt.Printf("Peer ID: %s\n", node.ID())
 		fmt.Println("Addresses:")
-		for _, addr := range h.Addrs() {
-			fmt.Printf("  %s/p2p/%s\n", addr, h.ID())
+		for _, addr := range node.Addrs() {
+			fmt.Printf("  %s\n", addr)
 		}
+		fmt.Println()
+		fmt.Println("On a public server the printed listen IP is the internal one;")
+		fmt.Println("hand clients the multiaddr with the PUBLIC IP, e.g.:")
+		fmt.Printf("  np4cli --bootstrap %s --hops 1 chat\n", node.Addrs()[0])
+		fmt.Println()
 
 		if webPort > 0 {
-			go startGinServer(h, dhtInstance)
+			go startGinServer(node)
 			fmt.Printf("Dashboard: http://localhost:%d\n", webPort)
 		}
 
-		fmt.Println()
-		fmt.Println("Use the multiaddr above with np4cli --bootstrap flag")
-		fmt.Println("Press Ctrl+C to stop")
+		// Advertise as mix relay. Publishing the key needs a non-empty DHT
+		// routing table (records are stored on peers), and on a fresh
+		// bootstrap only the first joining client provides one — retry until
+		// then. An in-flight wait returns as soon as a peer appears, so the
+		// relay becomes routable within ~seconds of the first client joining.
+		fmt.Println("[bootstrap] relay advertisement starts once the first client joins the DHT")
+		go func() {
+			for {
+				if err := node.ServeRelay(); err == nil {
+					fmt.Println("[bootstrap] advertised as mix relay (np4-relay rendezvous)")
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(3 * time.Second):
+				}
+			}
+		}()
 
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		<-sigCh
-
+		<-ctx.Done()
 		fmt.Println("\nShutting down...")
 		return nil
 	},
 }
 
-func startGinServer(h host.Host, dhtInstance *dht.IpfsDHT) {
+func startGinServer(node *np4.Node) {
+	h := node.Host()
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 	r.Use(func(c *gin.Context) {
@@ -94,13 +110,10 @@ func startGinServer(h host.Host, dhtInstance *dht.IpfsDHT) {
 	})
 
 	r.GET("/api/status", func(c *gin.Context) {
-		addrs := make([]string, len(h.Addrs()))
-		for i, addr := range h.Addrs() {
-			addrs[i] = addr.String() + "/p2p/" + h.ID().String()
-		}
+		addrs := node.Addrs()
 		rtSize := 0
-		if dhtInstance != nil {
-			rtSize = dhtInstance.RoutingTable().Size()
+		if dht := node.DHT(); dht != nil {
+			rtSize = dht.RoutingTable().Size()
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"peer_id":   h.ID().String(),
@@ -136,7 +149,7 @@ func startGinServer(h host.Host, dhtInstance *dht.IpfsDHT) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
 
-		finder := &pathsel.DHTFinder{DHT: dhtInstance, Timeout: 5 * time.Second}
+		finder := &pathsel.DHTFinder{DHT: node.DHT(), Timeout: 5 * time.Second}
 		relays, err := finder.FindRelays(ctx)
 		if err != nil {
 			c.JSON(http.StatusOK, []interface{}{}) // empty on error
