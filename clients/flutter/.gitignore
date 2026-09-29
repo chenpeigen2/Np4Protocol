@@ -1,0 +1,19 @@
+# Build outputs
+native/
+macos/native/
+*.dylib
+*.dll
+*.so
+android/app/src/main/jniLibs/**/libnp4bridge.h
+
+# Flutter / Dart
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock
+
+# IDE
+.idea/
+*.iml

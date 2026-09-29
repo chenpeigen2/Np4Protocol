@@ -27,6 +27,16 @@ go build -o bin/np4cli ./cmd/np4cli/
 protoc --go_out=. --go_opt=paths=source_relative ../proto/np4.proto
 ```
 
+## Native Bridge & Flutter Client
+
+`go/cmd/np4bridge` builds the np4 stack into a native library (4 exported
+symbols, JSON-in/JSON-out) for the Flutter client in `clients/flutter`
+(Windows/macOS/Linux/Android — iOS deferred). Bridge logic lives in
+`go/pkg/bridge` (pure Go, unit-tested); events are polled, never pushed via
+callbacks. Build + app setup: `clients/flutter/tool/build_native.sh` and
+`clients/flutter/tool/setup.sh`. Android builds need `-ldflags=-checklinkname=0`
+(go-libp2p's anet dependency).
+
 ## Architecture
 
 Three-layer protocol stack using libp2p for P2P networking:
