@@ -2,6 +2,8 @@ package message
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"runtime"
 	"sync"
 )
@@ -29,13 +31,13 @@ type MessageHandler func(*Message)
 // MessageBus dispatches Messages to registered handlers via a fixed-size worker
 // pool. This bounds concurrency and prevents goroutine explosion under load.
 type MessageBus struct {
-	handlers []MessageHandler
-	hu       sync.RWMutex
-
-	ch      chan *Message
-	quit    chan struct{}
-	once    sync.Once
-	workers int
+	handlers  []MessageHandler
+	hu        sync.RWMutex
+	ch        chan *Message
+	quit      chan struct{}
+	once      sync.Once
+	startOnce sync.Once
+	workers   int
 }
 
 // ErrBusFull is returned by Send when the internal queue is full.
@@ -60,9 +62,11 @@ func NewMessageBus() *MessageBus {
 
 // Start launches the worker goroutines. Idempotent: subsequent calls are no-ops.
 func (b *MessageBus) Start() {
-	for i := 0; i < b.workers; i++ {
-		go b.worker()
-	}
+	b.startOnce.Do(func() {
+		for i := 0; i < b.workers; i++ {
+			go b.worker()
+		}
+	})
 }
 
 func (b *MessageBus) worker() {
@@ -77,12 +81,24 @@ func (b *MessageBus) worker() {
 			copy(handlers, b.handlers)
 			b.hu.RUnlock()
 			for _, h := range handlers {
-				h(msg)
+				dispatch(h, msg)
 			}
 		case <-b.quit:
 			return
 		}
 	}
+}
+
+// dispatch contains handler panics: handlers run in plain worker goroutines,
+// so one panic would take the whole node down. Log and keep dispatching —
+// a misbehaving application handler must not become a remote crash vector.
+func dispatch(h MessageHandler, msg *Message) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "[message] handler panicked: %v\n", r)
+		}
+	}()
+	h(msg)
 }
 
 // OnMessage registers a handler. Handlers must be safe to call from any worker
@@ -99,11 +115,17 @@ func (b *MessageBus) Send(msg *Message) error {
 	if msg == nil {
 		return errors.New("message is nil")
 	}
+	// Check shutdown FIRST and deterministically: a plain select would race
+	// the closed-quit case against the buffered-channel case, randomly
+	// reporting success on a dead bus.
+	select {
+	case <-b.quit:
+		return ErrBusClosed
+	default:
+	}
 	select {
 	case b.ch <- msg:
 		return nil
-	case <-b.quit:
-		return ErrBusClosed
 	default:
 		return ErrBusFull
 	}

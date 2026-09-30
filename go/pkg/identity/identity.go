@@ -35,26 +35,53 @@ func LoadOrCreate(path string) (*Identity, error) {
 		return fromSeed(edPriv.Seed())
 	}
 
+	if data, err := os.ReadFile(path); err == nil {
+		return fromSeed(data)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("read identity: %w", err)
+	}
+
+	// Not exists → create. Racing creators (threads or processes) must agree
+	// on ONE identity, so the seed is staged in a temp file and published
+	// with link(2): the winner's file appears atomically and complete, and
+	// losers discard theirs and load the winner's. A plain WriteFile would
+	// let every racer return its own freshly generated identity while the
+	// file contents flip-flop.
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)
 	}
-
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		_, edPriv, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			return nil, fmt.Errorf("generate ed25519: %w", err)
-		}
-		data = edPriv.Seed()
-		if err := os.WriteFile(path, data, 0o600); err != nil {
-			return nil, fmt.Errorf("write identity: %w", err)
-		}
-		return fromSeed(data)
-	}
+	_, edPriv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("read identity: %w", err)
+		return nil, fmt.Errorf("generate ed25519: %w", err)
 	}
-	return fromSeed(data)
+	seed := edPriv.Seed()
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".np4-identity-*")
+	if err != nil {
+		return nil, fmt.Errorf("stage identity: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once linked
+	if _, err := tmp.Write(seed); err != nil {
+		tmp.Close()
+		return nil, fmt.Errorf("stage identity: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, fmt.Errorf("stage identity: %w", err)
+	}
+
+	if err := os.Link(tmpName, path); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			// Lost the race: load the winner's identity.
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil, fmt.Errorf("read identity: %w", err)
+			}
+			return fromSeed(data)
+		}
+		return nil, fmt.Errorf("create identity: %w", err)
+	}
+	return fromSeed(seed)
 }
 
 func fromSeed(seed []byte) (*Identity, error) {
