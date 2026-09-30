@@ -3,8 +3,10 @@ package mix
 import (
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"math/big"
 	mathrand "math/rand"
+	"os"
 	"sync"
 	"time"
 )
@@ -124,6 +126,11 @@ func (m *MixEngine[T]) Pending() int {
 
 // flushLocked shuffles and dispatches the current buffer. Caller must hold m.mu.
 // onFlush is called synchronously so callers can coordinate shutdown.
+//
+// The callback runs in the timer goroutine (or inside Add's caller); a panic
+// there would take the whole node down. The batch is already detached from
+// the buffer, so the panic is contained, logged, and the engine keeps
+// serving — losing one batch beats losing the process.
 func (m *MixEngine[T]) flushLocked() {
 	if len(m.buffer) == 0 {
 		return
@@ -137,5 +144,10 @@ func (m *MixEngine[T]) flushLocked() {
 	})
 	batch := m.buffer
 	m.buffer = nil
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "[mix] flush callback panicked: %v\n", r)
+		}
+	}()
 	m.onFlush(batch)
 }

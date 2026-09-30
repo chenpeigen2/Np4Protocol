@@ -2,7 +2,10 @@ package identity
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
+
+	"golang.org/x/crypto/curve25519"
 )
 
 // ed25519 field prime: 2^255 - 19.
@@ -50,6 +53,19 @@ func Ed25519PubToX25519(edPub []byte) ([]byte, error) {
 	}
 	u.Mul(u, num)
 	u.Mod(u, edwardsP)
+
+	// Reject low-order points. A node can publish an ed25519 key whose
+	// X25519 image has order ≤ 8 (e.g. the all-zero key maps to u=1); when
+	// such a "poison" key is picked as a relay or destination, onion key
+	// agreement fails and pollutes the sender's retry loop. Multiplying by
+	// the cofactor 8 sends any order-≤8 point to the identity, which
+	// curve25519.X25519 rejects — honest keys (order ℓ, prime ≫ 8) are
+	// unaffected.
+	probe := make([]byte, 32)
+	probe[0] = 8 // clamping preserves the multiple-of-8 property
+	if _, err := curve25519.X25519(probe, bigToLE(u)); err != nil {
+		return nil, fmt.Errorf("ed25519 public key maps to a low-order X25519 point")
+	}
 
 	return bigToLE(u), nil
 }
