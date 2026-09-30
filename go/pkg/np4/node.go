@@ -71,6 +71,11 @@ const (
 	// half-TTL while the process is alive.
 	peerAdvertiseTTL  = 2 * time.Minute
 	relayAdvertiseTTL = 5 * time.Minute
+
+	// mixCapacity bounds the entry and relay mix buffers (~25 full batches):
+	// the entry mix backpressures Send with a hard error, the relay mix
+	// drops excess packets under flood instead of growing memory.
+	mixCapacity = 256
 )
 
 // Node is the local Np4Protocol peer. It owns a libp2p host, an identity, a
@@ -217,12 +222,17 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 		cancel:      cancel,
 	}
 	n.bus.Start()
-	n.mix = mix.NewMixEngine[pendingPacket](defaultMixBatch, defaultMixDelay, n.flushBatch)
+	// Capacity bounds memory under flood: the entry mix backpressures Send
+	// (hard error), the relay mix drops excess packets — both instead of
+	// buffering without limit.
+	n.mix = mix.NewMixEngine[pendingPacket](defaultMixBatch, defaultMixDelay, n.flushBatch,
+		mix.WithCapacity[pendingPacket](mixCapacity))
 	relayBatch, relayDelay := defaultRelayMixBatch, defaultRelayMixDelay
 	if cfg.immediateRelay {
 		relayBatch, relayDelay = 1, 0
 	}
-	n.relayMix = mix.NewMixEngine[relayPacket](relayBatch, relayDelay, n.flushRelayBatch)
+	n.relayMix = mix.NewMixEngine[relayPacket](relayBatch, relayDelay, n.flushRelayBatch,
+		mix.WithCapacity[relayPacket](mixCapacity))
 
 	// DHT is enabled in two cases:
 	//   - WithDHTServer: standalone seed/bootstrap node (no bootstrap peers,

@@ -9,6 +9,24 @@ import (
 	"time"
 )
 
+// ErrMixFull is returned by Add when the engine is at its configured
+// capacity — the protocol's BATCH_FULL backpressure signal.
+var ErrMixFull = errors.New("mix buffer full")
+
+// Option configures a MixEngine at construction time.
+type Option[T any] func(*MixEngine[T])
+
+// WithCapacity bounds the buffer at n messages. When full, Add returns
+// ErrMixFull (backpressure) instead of growing memory without limit. Zero or
+// negative means unbounded (the historical behavior; tests only).
+func WithCapacity[T any](n int) Option[T] {
+	return func(m *MixEngine[T]) {
+		if n > 0 {
+			m.capacity = n
+		}
+	}
+}
+
 // MixEngine batches messages, shuffles them, and flushes either when batchSize
 // is reached or maxDelay elapses. The shuffle order is seeded from crypto/rand
 // so it varies across process restarts.
@@ -16,6 +34,7 @@ type MixEngine[T any] struct {
 	buffer    []*T
 	batchSize int
 	maxDelay  time.Duration
+	capacity  int
 	onFlush   func([]*T)
 	mu        sync.Mutex
 	timer     *time.Timer
@@ -35,26 +54,34 @@ func (lr *lockedRand) Shuffle(n int, swap func(i, j int)) {
 	lr.r.Shuffle(n, swap)
 }
 
-func NewMixEngine[T any](batchSize int, maxDelay time.Duration, onFlush func([]*T)) *MixEngine[T] {
+func NewMixEngine[T any](batchSize int, maxDelay time.Duration, onFlush func([]*T), opts ...Option[T]) *MixEngine[T] {
 	seedInt, err := rand.Int(rand.Reader, big.NewInt(1<<62))
 	if err != nil {
 		// crypto/rand failure is exceptional; fall back to time-based seed.
 		seedInt = big.NewInt(time.Now().UnixNano())
 	}
-	return &MixEngine[T]{
+	m := &MixEngine[T]{
 		batchSize: batchSize,
 		maxDelay:  maxDelay,
 		onFlush:   onFlush,
 		rnd:       &lockedRand{r: mathrand.New(mathrand.NewSource(seedInt.Int64()))},
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
-// Add enqueues msg. Returns an error if the engine is closed.
+// Add enqueues msg. Returns ErrMixFull when the engine is at capacity and
+// an error if the engine is closed.
 func (m *MixEngine[T]) Add(msg *T) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return errors.New("mix engine closed")
+	}
+	if m.capacity > 0 && len(m.buffer) >= m.capacity {
+		return ErrMixFull
 	}
 	m.buffer = append(m.buffer, msg)
 	if len(m.buffer) >= m.batchSize {

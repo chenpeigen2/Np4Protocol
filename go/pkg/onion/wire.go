@@ -70,14 +70,16 @@ func Wrap(ttl uint8, layer []byte) ([]byte, error) {
 	return out, nil
 }
 
-// Unwrap splits a wire packet into ttl and layer ciphertext. The returned
-// layer aliases the input packet.
+// Unwrap splits a wire packet into ttl and layer ciphertext. Packets MUST be
+// exactly WireSize — the link layer is constant-size by spec, and accepting
+// other lengths would reintroduce the size side channel Wrap exists to
+// remove. The returned layer aliases the input packet.
 func Unwrap(packet []byte) (uint8, []byte, error) {
-	if len(packet) < wireHeader {
-		return 0, nil, fmt.Errorf("%w: shorter than header", ErrWireInvalid)
+	if len(packet) != WireSize {
+		return 0, nil, fmt.Errorf("%w: got %d bytes, want exactly %d", ErrWireInvalid, len(packet), WireSize)
 	}
 	clen := int(binary.BigEndian.Uint16(packet[1:wireHeader]))
-	if clen < minLayerSize || clen > maxLayerSize || wireHeader+clen > len(packet) {
+	if clen < minLayerSize || clen > maxLayerSize {
 		return 0, nil, fmt.Errorf("%w: clen %d out of range [%d, %d]", ErrWireInvalid, clen, minLayerSize, maxLayerSize)
 	}
 	return packet[0], packet[wireHeader : wireHeader+clen], nil

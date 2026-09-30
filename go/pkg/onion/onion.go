@@ -68,6 +68,11 @@ func Build(path []Hop, finalPayload []byte) (*Onion, error) {
 	if len(path) == 0 {
 		return nil, errors.New("empty path")
 	}
+	// Layer ciphertext = eph_pub + nonce + AEAD(plaintext); rejecting at
+	// build time (before any AEAD work) keeps oversized onions from slipping
+	// into the mix queue where their death at Wrap time would be a silent
+	// message loss instead of the caller's hard error.
+	const layerOverhead = ephPubSize + nonceSize + chacha20poly1305.Overhead
 
 	// Innermost: flagFinal || payload
 	current := append([]byte{flagFinal}, finalPayload...)
@@ -85,6 +90,10 @@ func Build(path []Hop, finalPayload []byte) (*Onion, error) {
 			plaintext = append([]byte{flagRelay}, lenBuf...)
 			plaintext = append(plaintext, nextHopBytes...)
 			plaintext = append(plaintext, current...)
+		}
+		if layerOverhead+len(plaintext) > maxLayerSize {
+			return nil, fmt.Errorf("%w: hop %d plaintext %d + overhead %d exceeds %d",
+				ErrLayerTooLarge, i, len(plaintext), layerOverhead, maxLayerSize)
 		}
 		layer, err := encryptLayer(path[i], plaintext)
 		if err != nil {
