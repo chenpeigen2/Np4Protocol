@@ -202,6 +202,28 @@ func (m *Manager) Call(id int64, req []byte) (map[string]any, error) {
 		}
 		return map[string]any{}, nil
 
+	case "connect":
+		// Direct-mode dial, mirroring the CLI's pre-connect step (chat
+		// --insecure dials before sending). Mix mode needs no explicit dial.
+		var args struct {
+			Addr string `json:"addr"`
+		}
+		if err := json.Unmarshal(r.Args, &args); err != nil {
+			return nil, fmt.Errorf("bridge: connect args: %w", err)
+		}
+		ma, err := multiaddr.NewMultiaddr(args.Addr)
+		if err != nil {
+			return nil, fmt.Errorf("bridge: connect addr: %w", err)
+		}
+		ai, err := peer.AddrInfoFromP2pAddr(ma)
+		if err != nil {
+			return nil, fmt.Errorf("bridge: connect addr: %w", err)
+		}
+		if err := h.node.Connect(*ai); err != nil {
+			return nil, err
+		}
+		return map[string]any{}, nil
+
 	case "poll":
 		events, dropped := h.events.drain()
 		return map[string]any{"events": events, "dropped": dropped}, nil
