@@ -127,13 +127,23 @@ class ChatController(QObject):
         # records must not stack up in the picker.
         contacts: list[tuple[str, list]] = []
         seen: set[str] = set()
+        relays = 0
         for pid, addrs, is_relay in peers:
-            if is_relay or pid in seen:
+            if is_relay:
+                relays += 1
+                continue
+            if pid in seen:
                 continue
             seen.add(pid)
             contacts.append((pid, addrs))
         self._contacts = [pid for pid, _ in contacts]
         self.peers_updated.emit(contacts)
+        # Make relay liveness visible in the banner: a zero-relay network
+        # means every send will fail, and the user should know before typing.
+        if relays == 0:
+            self.state_changed.emit(f"⚠ 网络中没有在线 relay——发送会失败（{len(contacts)} 个联系人）")
+        else:
+            self.state_changed.emit(f"在线（联系人 {len(contacts)} · relay {relays}）")
         self._maybe_selftest(contacts)
 
     def _on_send_done(self, dest: str, text: str, error: str) -> None:
