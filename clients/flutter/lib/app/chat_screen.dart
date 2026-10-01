@@ -32,6 +32,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _messages = <_ChatMessage>[];
   final _destCtrl = TextEditingController();
   final _peers = <PeerEntry>[];
+  int _relayCount = 0;
   StreamSubscription<Np4Incoming>? _sub;
   Timer? _peersTimer;
   bool _sending = false;
@@ -52,10 +53,23 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final peers = await widget.client.listPeers();
       if (!mounted) return;
-      // Relays are infrastructure, not chat contacts.
-      setState(() => _peers
-        ..clear()
-        ..addAll(peers.where((p) => !p.isRelay)));
+      // Dedupe by peer ID, keep relays out of the contact picker — they are
+      // infrastructure, and messaging the sole relay is impossible.
+      final deduped = <String, PeerEntry>{};
+      var relays = 0;
+      for (final p in peers) {
+        if (p.isRelay) {
+          relays++;
+        } else {
+          deduped.putIfAbsent(p.peerId, () => p);
+        }
+      }
+      setState(() {
+        _relayCount = relays;
+        _peers
+          ..clear()
+          ..addAll(deduped.values);
+      });
       debugPrint('[np4] peers online: ${_peers.length}');
     } catch (_) {
       // Transient DHT state; the next refresh retries.
@@ -92,6 +106,29 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _inputCtrl.text.trim();
     final dest = _destCtrl.text.trim();
     if (text.isEmpty || dest.isEmpty) return;
+    // Delivery is best-effort: a destination outside the online list is most
+    // likely dead or stale, and the message will be silently lost. Say so.
+    if (!_peers.any((p) => p.peerId == dest)) {
+      final go = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('可能无法送达'),
+          content: Text(
+              '对方 ${dest.substring(0, dest.length > 24 ? 24 : dest.length)}… 不在当前在线列表中：\n'
+              '对方可能已离线，或地址已过期。\n'
+              '消息仍会进入匿名队列，但大概率丢失。仍要发送吗？'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('取消')),
+            TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('仍要发送')),
+          ],
+        ),
+      );
+      if (go != true) return;
+    }
     setState(() => _sending = true);
     try {
       await widget.client.send(dest, text);
@@ -163,17 +200,28 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(
         children: [
           Material(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            color: _relayCount == 0
+                ? Theme.of(context).colorScheme.errorContainer
+                : Theme.of(context).colorScheme.surfaceContainerHighest,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               child: Row(
                 children: [
-                  Icon(Icons.privacy_tip_outlined,
-                      size: 16, color: Theme.of(context).colorScheme.primary),
+                  Icon(
+                    _relayCount == 0
+                        ? Icons.warning_amber_outlined
+                        : Icons.privacy_tip_outlined,
+                    size: 16,
+                    color: _relayCount == 0
+                        ? Theme.of(context).colorScheme.error
+                        : Theme.of(context).colorScheme.primary,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      '匿名模式：对方显示为 anonymous；尽力送达，离线即丢',
+                      _relayCount == 0
+                          ? '⚠ 网络中没有在线 relay——发送会失败'
+                          : '匿名模式 · 在线：联系人 ${_peers.length} · relay $_relayCount · 尽力送达',
                       style: Theme.of(context).textTheme.bodySmall,
                       overflow: TextOverflow.ellipsis,
                     ),
