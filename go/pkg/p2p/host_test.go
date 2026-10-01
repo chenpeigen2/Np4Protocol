@@ -58,13 +58,13 @@ func TestNewHostWithIdentityStable(t *testing.T) {
 	id1, _ := identity.LoadOrCreate(dir + "/a")
 	id2, _ := identity.LoadOrCreate(dir + "/a") // same file
 
-	h1, err := NewHostWithIdentity(id1, 0)
+	h1, err := NewHostWithIdentity(id1, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer h1.Close()
 
-	h2, err := NewHostWithIdentity(id2, 0)
+	h2, err := NewHostWithIdentity(id2, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

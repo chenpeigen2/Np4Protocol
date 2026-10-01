@@ -113,7 +113,11 @@ func newAdversarialNet(t *testing.T) *adversarialNet {
 // buildWire crafts a wire packet r1 → r2 → recv carrying content.
 func (an *adversarialNet) buildWire(t *testing.T, content string, ttl uint8) []byte {
 	t.Helper()
-	c, err := cell.Seal([]byte(content))
+	msgID, err := cell.NewMsgID()
+	if err != nil {
+		t.Fatalf("cell msg id: %v", err)
+	}
+	c, err := cell.Seal(msgID, cell.TypeText, make([]byte, cell.TagSize), []byte(content))
 	if err != nil {
 		t.Fatalf("cell seal: %v", err)
 	}

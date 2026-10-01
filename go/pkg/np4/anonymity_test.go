@@ -204,7 +204,11 @@ func runAnonymityExperiment(t *testing.T, control bool) anRunResult {
 		}
 		dstID := reload(fmt.Sprintf("c%d", dst))
 
-		c, err := cell.Seal([]byte(fmt.Sprintf("%s-flow-%d", label, i)))
+		msgID, err := cell.NewMsgID()
+		if err != nil {
+			t.Fatalf("[%s] msg id: %v", label, err)
+		}
+		c, err := cell.Seal(msgID, cell.TypeText, make([]byte, cell.TagSize), []byte(fmt.Sprintf("%s-flow-%d", label, i)))
 		if err != nil {
 			t.Fatalf("[%s] seal: %v", label, err)
 		}

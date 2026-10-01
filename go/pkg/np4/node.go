@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"Np4Protocol/go/pkg/auth"
 	"Np4Protocol/go/pkg/cell"
 	"Np4Protocol/go/pkg/identity"
 	"Np4Protocol/go/pkg/message"
@@ -34,6 +35,7 @@ import (
 	"Np4Protocol/go/pkg/pathsel"
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
+	"github.com/libp2p/go-libp2p/core/connmgr"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -76,6 +78,16 @@ const (
 	// the entry mix backpressures Send with a hard error, the relay mix
 	// drops excess packets under flood instead of growing memory.
 	mixCapacity = 256
+
+	// defaultRelayBurst is the per-peer ingress bucket capacity: enough to
+	// absorb a full mix batch flushed back-to-back without drops.
+	defaultRelayBurst = 50
+
+	// defaultContactRefresh is how often the receiver-side contact cache
+	// (peer ID → published ECDH key, used for sender verification) rebuilds
+	// from the DHT. Verification uses the snapshot; a brand-new contact is
+	// verifiable within one interval.
+	defaultContactRefresh = 30 * time.Second
 )
 
 // Node is the local Np4Protocol peer. It owns a libp2p host, an identity, a
@@ -94,6 +106,12 @@ type Node struct {
 	replay      *seenCache    // ephemeral onion keys seen by this node (anti-replay)
 	seenMsg     *seenCache    // end-to-end msg_id dedup
 	dispatchSem chan struct{} // semaphore bounding flush goroutines
+
+	limiter *relayLimiter // per-peer ingress rate limit; nil = unlimited
+
+	contactMu   sync.RWMutex
+	contacts    map[peer.ID][]byte // verified-binding published ECDH keys, for sender verification
+	contactTick time.Duration      // 0 = manual refresh only
 
 	evMu      sync.RWMutex
 	evHandler func(LinkEvent)
@@ -167,6 +185,20 @@ type config struct {
 	// lets a test run the same traffic with and without mixing to verify the
 	// measurement harness actually detects correlation when mixing is off.
 	immediateRelay bool
+
+	// admission, when non-nil, gates key publication on this node's DHT:
+	// records for peer IDs it rejects are refused at the validator. This is
+	// the single-server allowlist choke point — a node that cannot publish
+	// its key is invisible to the directory and unusable as relay/destination.
+	admission func(peer.ID) bool
+
+	// relay ingress rate limit; rate <= 0 disables the limiter.
+	relayRate  float64
+	relayBurst int
+
+	// contactRefresh controls the background sender-verification cache
+	// rebuild. 0 disables the loop (RefreshContacts must be called manually).
+	contactRefresh time.Duration
 }
 
 // WithIdentity loads (or creates) the node's identity from path.
@@ -193,6 +225,28 @@ func WithHops(h int) Option { return func(c *config) { c.hops = h } }
 // the mixing this protocol exists to provide.
 func WithImmediateRelayForward() Option { return func(c *config) { c.immediateRelay = true } }
 
+// WithAdmission gates who may talk to this node at the connection level and,
+// on DHT-server nodes, who may publish records: peer IDs the function rejects
+// cannot complete a handshake (a gated bootstrap keeps outsiders out of the
+// DHT entirely) and their np4 records are refused at the validator. Use it
+// for single-server allowlist admission. nil (default) allows all.
+func WithAdmission(allow func(peer.ID) bool) Option { return func(c *config) { c.admission = allow } }
+
+// WithRelayRateLimit enables the per-peer ingress token bucket on the onion
+// protocol: rate cells per second, burst bucket capacity. rate <= 0 disables
+// limiting. Intended for relay nodes (the bootstrap) facing untrusted clients.
+func WithRelayRateLimit(rate float64, burst int) Option {
+	return func(c *config) { c.relayRate, c.relayBurst = rate, burst }
+}
+
+// WithContactRefreshInterval sets how often the sender-verification contact
+// cache rebuilds from the DHT (default 30s). Pass a negative duration to
+// disable the background loop entirely — callers then drive RefreshContacts
+// manually; tests use that for determinism.
+func WithContactRefreshInterval(d time.Duration) Option {
+	return func(c *config) { c.contactRefresh = d }
+}
+
 // NewNode creates a Node. Without WithBootstrap, the node runs in direct-only
 // mode (no mix routing, no DHT). With WithBootstrap, it joins the DHT and
 // routes Send calls through the mix.
@@ -206,7 +260,15 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("identity: %w", err)
 	}
-	h, err := p2p.NewHostWithIdentity(id, port)
+	// Connection-level admission: an unadmitted peer cannot even complete a
+	// handshake with this node, so a gated bootstrap keeps outsiders out of
+	// the DHT entirely — record-level validation alone cannot do that (a
+	// node always stores its own records locally). nil gater = open network.
+	var gater connmgr.ConnectionGater
+	if cfg.admission != nil {
+		gater = p2p.AdmissionGater(cfg.admission)
+	}
+	h, err := p2p.NewHostWithIdentity(id, port, gater)
 	if err != nil {
 		return nil, fmt.Errorf("host: %w", err)
 	}
@@ -219,8 +281,16 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 		replay:      newSeenCache(replayCacheCapacity),
 		seenMsg:     newSeenCache(seenMsgCapacity),
 		dispatchSem: make(chan struct{}, maxFlushConcurrency),
+		contacts:    make(map[peer.ID][]byte),
 		ctx:         ctx,
 		cancel:      cancel,
+	}
+	if cfg.contactRefresh == 0 {
+		cfg.contactRefresh = defaultContactRefresh
+	}
+	n.contactTick = cfg.contactRefresh // negative = manual refresh only
+	if cfg.relayRate > 0 {
+		n.limiter = newRelayLimiter(cfg.relayRate, cfg.relayBurst)
 	}
 	n.bus.Start()
 	// Capacity bounds memory under flood: the entry mix backpressures Send
@@ -241,7 +311,7 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 	//   - WithBootstrap: joins an existing DHT via bootstrap peers, also routes
 	//     Send through the mix.
 	if cfg.dhtServer || len(cfg.bootstrap) > 0 {
-		kdht, err := p2p.StartDHT(ctx, h, cfg.bootstrap)
+		kdht, err := p2p.StartDHT(ctx, h, cfg.bootstrap, cfg.admission)
 		if err != nil {
 			cancel()
 			h.Close()
@@ -252,6 +322,11 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 			n.bootstrap = cfg.bootstrap[0]
 		}
 		p2p.AdvertiseRendezvousTTL(ctx, kdht, cfg.rendezvous, relayAdvertiseTTL)
+
+		// Sender verification needs the published keys of every contact.
+		// Rebuild the snapshot in the background; verification degrades to
+		// "unverified" (never to a dropped message) while the cache is cold.
+		go n.contactRefreshLoop()
 
 		// A standalone DHT server (seed node) has no onion-path consumers; it
 		// only serves records. Skip the path selector so Send falls back to
@@ -362,10 +437,6 @@ func (n *Node) Send(dest peer.ID, content []byte) error {
 	if n.pathSel == nil {
 		return errors.New("mix unavailable: node not in routed mode (missing WithBootstrap); use SendDirect explicitly if an unprotected send is acceptable")
 	}
-	c, err := cell.Seal(content)
-	if err != nil {
-		return err
-	}
 	path, err := n.pickPath(n.ctx, dest)
 	if err != nil {
 		if errors.Is(err, pathsel.ErrNotEnoughRelays) {
@@ -376,6 +447,21 @@ func (n *Node) Send(dest peer.ID, content []byte) error {
 	destPub, err := n.lookupDestPub(dest)
 	if err != nil {
 		return fmt.Errorf("destination keys: %w", err)
+	}
+	// Sender authentication: pairwise HMAC over msg_id‖content, verifiable
+	// only by the receiver (see package auth). Failure here is a hard error
+	// before the mix accepts anything — no silent unauthenticated fallback.
+	msgID, err := cell.NewMsgID()
+	if err != nil {
+		return fmt.Errorf("msg id: %w", err)
+	}
+	tag, err := auth.Tag(n.identity, destPub, dest, msgID, content)
+	if err != nil {
+		return fmt.Errorf("sender auth: %w", err)
+	}
+	c, err := cell.Seal(msgID, cell.TypeText, tag, content)
+	if err != nil {
+		return err
 	}
 	hops := append(path, onion.Hop{PeerID: dest, ECDHPub: destPub})
 	if len(hops)-1 > onion.MaxInitialTTL {
@@ -541,6 +627,13 @@ func (n *Node) forwardToNextHop(pkt *relayPacket) {
 // engine (batch + shuffle + delay) instead of forwarding immediately.
 func (n *Node) handleOnionStream(s network.Stream) {
 	defer s.Close()
+	// Per-peer ingress budget (relay nodes under client flood). Checked
+	// before any crypto work so garbage costs the attacker nothing but a
+	// closed stream.
+	if n.limiter != nil && !n.limiter.allow(s.Conn().RemotePeer()) {
+		fmt.Fprintf(os.Stderr, "[np4] ingress rate limited: %s\n", s.Conn().RemotePeer())
+		return
+	}
 	data, err := p2p.ReadMsg(s)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[np4] onion read: %v\n", err)
@@ -567,9 +660,14 @@ func (n *Node) handleOnionStream(s network.Stream) {
 		return
 	}
 	if dec.IsFinal {
-		msgID, content, err := cell.Open(dec.Inner)
+		msgID, typ, tag, content, err := cell.Open(dec.Inner)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[np4] cell open: %v\n", err)
+			return
+		}
+		// Dummy cells are cover traffic: drop before dedup so they cannot
+		// evict real msg_ids from the seen cache.
+		if typ == cell.TypeDummy {
 			return
 		}
 		// End-to-end dedup backstop: a replay that slips past per-hop caches
@@ -577,9 +675,24 @@ func (n *Node) handleOnionStream(s network.Stream) {
 		if n.seenMsg.Mark(string(msgID)) {
 			return
 		}
+		// Sender verification: the first contact whose pairwise key
+		// reproduces the tag is attributed; otherwise the message is
+		// delivered as unverified (badge), never dropped — a friend not yet
+		// in the contact cache must still be able to reach us.
+		senderID, verified := "anonymous", false
+		n.contactMu.RLock()
+		for pid, pub := range n.contacts {
+			ok, err := auth.Verify(n.identity, pub, pid, msgID, content, tag)
+			if err == nil && ok {
+				senderID, verified = pid.String(), true
+				break
+			}
+		}
+		n.contactMu.RUnlock()
 		n.bus.Send(&message.Message{
 			Type:     message.TypeAsync,
-			SenderID: "anonymous",
+			SenderID: senderID,
+			Verified: verified,
 			Content:  content,
 		})
 		return
@@ -756,4 +869,44 @@ func (n *Node) FindPeers(ctx context.Context, rendezvous string) (<-chan peer.Ad
 		return nil, errors.New("DHT not initialized")
 	}
 	return p2p.FindPeers(ctx, n.dht, rendezvous)
+}
+
+// RefreshContacts rebuilds the sender-verification cache: every key-verified
+// peer from ListPeers with its published ECDH key. The background loop calls
+// this every contactTick; tests and embedding UIs may call it manually.
+func (n *Node) RefreshContacts(ctx context.Context) error {
+	peers, err := n.ListPeers(ctx)
+	if err != nil {
+		return err
+	}
+	m := make(map[peer.ID][]byte, len(peers))
+	for _, p := range peers {
+		m[p.ID] = p.ECDHPub
+	}
+	n.contactMu.Lock()
+	n.contacts = m
+	n.contactMu.Unlock()
+	return nil
+}
+
+// contactRefreshLoop keeps the verification cache warm until the node stops.
+// A cold cache degrades messages to "unverified" instead of blocking them,
+// so the loop is best-effort by design.
+func (n *Node) contactRefreshLoop() {
+	if n.contactTick < 0 || n.dht == nil {
+		return
+	}
+	for {
+		ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
+		if err := n.RefreshContacts(ctx); err != nil {
+			// Transient DHT state (e.g. empty routing table on startup).
+			_ = err
+		}
+		cancel()
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-time.After(n.contactTick):
+		}
+	}
 }

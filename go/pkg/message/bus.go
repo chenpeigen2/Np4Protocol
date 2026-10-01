@@ -19,9 +19,14 @@ const (
 )
 
 type Message struct {
-	Type       MessageType
-	DestID     string
-	SenderID   string
+	Type     MessageType
+	DestID   string
+	SenderID string
+	// Verified reports that SenderID was attributed by sender authentication
+	// (pairwise tag). False means the sender is anonymous — either the tag
+	// matched no known contact or the transport cannot authenticate (direct).
+	// UIs badge unverified messages instead of dropping them.
+	Verified   bool
 	Content    []byte
 	SessionKey []byte
 }

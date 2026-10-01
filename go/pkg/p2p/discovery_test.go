@@ -60,7 +60,7 @@ func TestDHTStartAndBootstrap(t *testing.T) {
 	defer h1.Close()
 
 	bootstrapPeers := []peer.AddrInfo{{ID: bootstrap.ID(), Addrs: bootstrap.Addrs()}}
-	dht1, err := StartDHT(ctx, h1, bootstrapPeers)
+	dht1, err := StartDHT(ctx, h1, bootstrapPeers, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,11 +112,11 @@ func TestDHTDiscovery(t *testing.T) {
 
 	bootstrapPeers := []peer.AddrInfo{{ID: bootstrap.ID(), Addrs: bootstrap.Addrs()}}
 
-	dht1, err := StartDHT(ctx, h1, bootstrapPeers)
+	dht1, err := StartDHT(ctx, h1, bootstrapPeers, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dht2, err := StartDHT(ctx, h2, bootstrapPeers)
+	dht2, err := StartDHT(ctx, h2, bootstrapPeers, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

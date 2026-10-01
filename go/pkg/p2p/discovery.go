@@ -57,6 +57,11 @@ func StartMDNS(h host.Host, serviceTag string, notifee *discoveryNotifee) error 
 // publish their own key under a victim's peer ID without finding a public
 // key that hashes to the victim's ID.
 //
+// Admission (optional) gates WHO may publish at all: when set, only peer IDs
+// it accepts are stored. This is the single-server allowlist choke point —
+// a node that cannot publish its key is invisible to the directory and
+// unusable as relay or destination.
+//
 // The stored value is the node's ed25519 public key (libp2p-marshaled), same
 // convention as /pk records. Senders convert it to X25519 locally.
 //
@@ -64,9 +69,11 @@ func StartMDNS(h host.Host, serviceTag string, notifee *discoveryNotifee) error 
 // (it only uses the first segment for dispatch), so `key` here is
 // "/np4/ecdh/<base32(peer-multihash)>". We take everything after the last
 // '/' — base32's alphabet never contains '/'.
-type np4Validator struct{}
+type np4Validator struct {
+	Admission func(peer.ID) bool
+}
 
-func (np4Validator) Validate(key string, value []byte) error {
+func (v np4Validator) Validate(key string, value []byte) error {
 	raw, err := base32.StdEncoding.DecodeString(key[strings.LastIndexByte(key, '/')+1:])
 	if err != nil {
 		return fmt.Errorf("np4: key is not valid base32: %w", err)
@@ -82,10 +89,15 @@ func (np4Validator) Validate(key string, value []byte) error {
 	if !bytes.Equal(raw, []byte(id)) {
 		return fmt.Errorf("np4: public key binds to peer %s, wanted %s", id, peer.ID(raw))
 	}
+	// Only verifiable bindings consume admission: a forged record dies on
+	// the check above regardless of the list.
+	if v.Admission != nil && !v.Admission(id) {
+		return fmt.Errorf("np4: peer %s is not admitted to this network", id)
+	}
 	return nil
 }
 
-func (np4Validator) Select(key string, values [][]byte) (int, error) {
+func (v np4Validator) Select(key string, values [][]byte) (int, error) {
 	if len(values) == 0 {
 		return 0, errors.New("np4: no values to select")
 	}
@@ -104,12 +116,15 @@ const providerRecordValidity = 5 * time.Minute
 // this check is the only defense against key poisoning), sets server mode so
 // this node stores+serves records, and bootstraps.
 //
+// admission, when non-nil, additionally restricts which peer IDs may publish
+// np4 records on this DHT (single-server allowlist admission). nil allows all.
+//
 // The np4 validator is injected into the DHT's namespaced validator map AFTER
 // construction. The Amino-locked default DHT validates its config to require
 // exactly the /pk and /ipns namespaces during dht.New, so we let those
 // defaults populate normally and then add "np4" to the (already-exposed)
 // record.NamespacedValidator map before any PutValue/GetValue runs.
-func StartDHT(ctx context.Context, h host.Host, bootstrapPeers []peer.AddrInfo) (*dht.IpfsDHT, error) {
+func StartDHT(ctx context.Context, h host.Host, bootstrapPeers []peer.AddrInfo, admission func(peer.ID) bool) (*dht.IpfsDHT, error) {
 	kademliaDHT, err := dht.New(ctx, h,
 		dht.BootstrapPeers(bootstrapPeers...),
 		dht.Mode(dht.ModeServer),
@@ -119,7 +134,7 @@ func StartDHT(ctx context.Context, h host.Host, bootstrapPeers []peer.AddrInfo) 
 		return nil, err
 	}
 	if nsVal, ok := kademliaDHT.Validator.(record.NamespacedValidator); ok {
-		nsVal["np4"] = np4Validator{}
+		nsVal["np4"] = np4Validator{Admission: admission}
 	}
 	if err := kademliaDHT.Bootstrap(ctx); err != nil {
 		return nil, err

@@ -11,13 +11,14 @@ Np4Protocol is a Mixnet-based anonymous communication protocol designed for meta
 
 **协议设计目标**：对抗**主动 relay**——relay 可重放、篡改、说谎（发布伪造 key 记录）、拒绝转发、注入任意字节流。网络观察者保持被动（**不防 GPA 全局时序分析**）。
 
-**当前验收底线**：协议不崩溃、不泄露明文、重放与 DHT 毒化被拒。
+**当前验收底线**：协议不崩溃、不泄露明文、重放与 DHT 毒化被拒；发往已知联系人的消息可验证归属（伪造/篡改被拒），未验证消息有显式徽标而非静默丢弃。
 
 **已知边界（不解决，见 [v2]）**：
 
-- Relay 发现无抗 Sybil：攻击者可注册大量 relay 吸路径。
-- 静态长期 ECDH key，无 forward secrecy。
-- 无 dummy traffic：流量速率本身泄露活跃度。
+- 静态长期 ECDH key，无 forward secrecy（[M4] 时间桶轮换）。
+- 无 dummy traffic：流量速率本身泄露活跃度（[M3]；cell type 字节已就位）。
+- 开放准入模式（无 --allowlist）下无抗 Sybil：攻击者可注册大量 relay 吸路径。
+- Replay 防线依赖内存缓存（eph_pub LRU 100k + msg_id 去重 100k）：重启清零、淘汰后窗口重开；去重保证不重复投递，残余风险为容量挤占，评估低危（2026-10-01 审查备案）。
 
 **已度量的基线**（`TestMiddleRelayUnlinkability`，60 条流，6 客户端，中间 relay 时序关联攻击）：
 
@@ -35,7 +36,9 @@ Np4Protocol is a Mixnet-based anonymous communication protocol designed for meta
 ┌─────────────────────────────────────────────────────────┐
 │  应用层    │  消息（异步）；presence/离线/群聊 [v2]        │
 ├─────────────────────────────────────────────────────────┤
-│  Cell 层  │  定长 4096B cell：msg_id ‖ len ‖ content    │ [must]
+│  认证层    │  sender-auth tag：pairwise ECDH→HMAC-128   │ [must]
+├─────────────────────────────────────────────────────────┤
+│  Cell 层  │  定长 4096B cell：id‖type‖tag‖len‖content  │ [must]
 ├─────────────────────────────────────────────────────────┤
 │  匿名层    │  MixEngine 批量混洗；入口 500ms / relay 200ms│ [must]
 ├─────────────────────────────────────────────────────────┤
@@ -43,21 +46,39 @@ Np4Protocol is a Mixnet-based anonymous communication protocol designed for meta
 ├─────────────────────────────────────────────────────────┤
 │  加密层    │  X25519 + HKDF-SHA256 + ChaCha20-Poly1305 │
 ├─────────────────────────────────────────────────────────┤
-│  传输层    │  libp2p TCP + Noise + yamux；长度前缀帧     │
+│  传输层    │  libp2p TCP + Noise + yamux；长度前缀帧；  │
+│            │  bootstrap 可选 ConnectionGater 准入       │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## Cell 格式 **[must]**
+## Cell 格式 v2 **[must]**
 
 Cell 是定长 **4096 字节**的协议常量（上线后不可协商）：
 
 ```
-msg_id (16B) ‖ content_len (2B, big-endian) ‖ content ‖ 0x00 padding
+msg_id (16B) ‖ type (1B) ‖ tag (16B) ‖ content_len (2B, big-endian) ‖ content ‖ 0x00 padding
 ```
 
 - `msg_id`：随机 16 字节；接收端按 `msg_id` 幂等去重。
-- 最大 content = 4078 字节；更大内容 **[v2]** 分块协议。
-- 真实长度只编码在信封内部（随洋葱最内层加密）；外层任何尺寸差必须为零。
+- `type`：`0x00` = dummy（cover traffic，[M3] 注入），`0x01` = text。仅接收端可见；relay 无法区分。
+- `tag`：sender-auth 标签（见「消息认证」）；dummy cell 全零。
+- 最大 content = **4061 字节**；更大内容 **[v2]** 分块协议。
+- 真实长度/类型/标签只编码在信封内部（随洋葱最内层加密）；外层任何尺寸差必须为零。
+
+## 消息认证 **[must]**
+
+目标：**匿名但可验真**——接收端确认消息出自已知联系人，网络与 relay 全程不可见、第三方不可证明。
+
+- 发送端：`shared = X25519(自己的静态 X25519 私钥, 接收端已发布 ECDH pub)`；`key = HKDF-SHA256(shared, salt="np4-auth-v1", info=排序后的双方 peer ID)`；`tag = HMAC-SHA256(key, msg_id ‖ content)[:16]`。
+- 接收端不知发送者是谁，遍历自己的联系人缓存（peer ID → 已验证发布的 ECDH pub）重算并常量时间比对；首个匹配即归属（`Verified=true`，`SenderID` = 该联系人）。
+- 无匹配 → 消息**照常投递**、标记 `Verified=false`（UI 显示"未验证来源"徽标，不静默丢弃）——冷缓存中的新联系人仍可达。
+- 性质：对称 MAC → **可否认**（接收方自己也算得出，第三方持完整转录无法证明发送者）；info 绑定双方 ID → 标签不可移植到其他对话；伪造/篡改在常量时间比对下拒绝。
+- 已知边界：静态长期密钥，无前向保密（[M4] 时间桶轮换：24h 轮换 / 7d 保留）。
+
+## 准入与限速 **[must]**
+
+- **Allowlist 准入**（可选，单服务器部署）：bootstrap `--allowlist` 文件（每行一个 peer ID，热加载）。名单外节点在连接层即被 `ConnectionGater` 拒绝（无法加入 DHT——连接门是唯一密封闸点，记录校验挡不住节点本地自存记录）；validator 层同样拒绝名单外 `/np4/ecdh` 发布作纵深防御。**空/未配置 = 开放准入**（开发模式）。bootstrap 自身 ID 永远豁免。
+- **Relay 入口限速**：per-peer 令牌桶，默认 10 cell/s、burst 50（`--relay-rate` 可调，0=不限）。在洋葱流入口、任何密码学处理之前执行，防单客户端灌满 relay mix（容量 256、drop-oldest）挤占他人流量。
 
 ## 洋葱层与 Wire 格式 **[must]**
 
@@ -77,7 +98,7 @@ layer_ciphertext = eph_pub(32) ‖ nonce(12) ‖ ChaCha20-Poly1305(flag ‖ rout
 ## Key 记录（DHT）
 
 - 记录 value = 节点 **ed25519 公钥**（libp2p 编码），key = `/np4/ecdh/<base32(peer multihash)>`。
-- Validator 强制 `IDFromPublicKey(value) == key 中的 peerID`——DHT 不验签名，此绑定是唯一防毒化机制，**不可移除**。
+- Validator 强制 `IDFromPublicKey(value) == key 中的 peerID`——DHT 不验签名，此绑定是唯一防毒化机制，**不可移除**；配置 allowlist 时，validator 额外拒绝名单外 peer 的发布（纵深防御，连接门为主）。
 - 发送端本地将 ed25519 pub 双有理映射换算为 X25519 pub（与 NaCl 派生兼容）。
 
 ## Node Types
@@ -106,7 +127,8 @@ v1 仅使用 `TypeAsync`（mix 送达）与 direct JSON 消息（`--insecure`）
 
 ## [v2] Roadmap
 
-- Dummy traffic + 全局限速（届时重新评估 cell 尺寸）。
+- [M3] Dummy traffic：全节点注入 Poisson cover cells（默认 1 cell/2s，`--dummy-rate`），cell type 字节已就位；届时重新评估 cell 尺寸。
+- [M4] Forward secrecy：时间桶子密钥（24h 轮换 / 7d 保留，复用 PublishKeys 通道）。
 - 端到端 ACK（回程 onion 路径）。
 - Key rotation / forward secrecy（与 DHT record TTL 耦合）。
 - 文件传输分块协议。
