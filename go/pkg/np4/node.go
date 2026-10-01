@@ -82,13 +82,14 @@ const (
 // message bus, an entry mix engine, and — when serving as a relay — a relay
 // mix engine, plus replay/dedup caches.
 type Node struct {
-	host     host.Host
-	identity *identity.Identity
-	bus      *message.MessageBus
-	mix      *mix.MixEngine[pendingPacket]
-	relayMix *mix.MixEngine[relayPacket]
-	dht      *dht.IpfsDHT
-	pathSel  *pathsel.Selector
+	host      host.Host
+	identity  *identity.Identity
+	bus       *message.MessageBus
+	mix       *mix.MixEngine[pendingPacket]
+	relayMix  *mix.MixEngine[relayPacket]
+	dht       *dht.IpfsDHT
+	pathSel   *pathsel.Selector
+	bootstrap peer.AddrInfo // empty in direct-only and DHT-server modes
 
 	replay      *seenCache    // ephemeral onion keys seen by this node (anti-replay)
 	seenMsg     *seenCache    // end-to-end msg_id dedup
@@ -247,6 +248,9 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 			return nil, fmt.Errorf("dht: %w", err)
 		}
 		n.dht = kdht
+		if len(cfg.bootstrap) > 0 {
+			n.bootstrap = cfg.bootstrap[0]
+		}
 		p2p.AdvertiseRendezvousTTL(ctx, kdht, cfg.rendezvous, relayAdvertiseTTL)
 
 		// A standalone DHT server (seed node) has no onion-path consumers; it
@@ -264,6 +268,16 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 	h.SetStreamHandler(ProtocolDirect, n.handleDirectStream)
 
 	return n, nil
+}
+
+// BootstrapID returns the peer ID of this node's bootstrap node, if any.
+// Clients use it to label infrastructure peers (the bootstrap is a relay in
+// the single-server deployment, never a chat contact).
+func (n *Node) BootstrapID() (peer.ID, bool) {
+	if n.bootstrap.ID == "" {
+		return "", false
+	}
+	return n.bootstrap.ID, true
 }
 
 // ID returns the node's libp2p peer ID.

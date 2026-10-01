@@ -13,7 +13,7 @@ import re
 import sys
 import threading
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QLockFile, QObject, QStandardPaths, pyqtSignal
 
 from np4_worker import BridgeWorker
 
@@ -28,8 +28,6 @@ _MULTIADDR_RE = re.compile(r"^/ip[46]/.+/tcp/\d+/p2p/.+$")
 def default_identity_path() -> str:
     if IDENTITY_ENV:
         return IDENTITY_ENV
-    from PyQt6.QtCore import QStandardPaths
-
     base = QStandardPaths.writableLocation(
         QStandardPaths.StandardLocation.AppDataLocation
     )
@@ -51,6 +49,9 @@ class ChatController(QObject):
     message_received = pyqtSignal(str, str)  # sender, content
     peers_updated = pyqtSignal(list)  # [(peer_id, addrs)]
     send_completed = pyqtSignal(str, str)  # text, error ('' = success)
+    # The destination is not in the current online list: delivery is
+    # best-effort and this message will most likely be lost. UI should warn.
+    delivery_risk = pyqtSignal(str)  # dest
     connect_failed = pyqtSignal(str)
 
     def __init__(self, parent=None) -> None:
@@ -58,15 +59,26 @@ class ChatController(QObject):
         self._worker: BridgeWorker | None = None
         self._selftest_sent = False
         self._selftest_lock = threading.Lock()
+        self._contacts: list[str] = []  # online, deduped, relay-free
+        self._lock: QLockFile | None = None
 
     # -- lifecycle -----------------------------------------------------------
 
     def connect(self, bootstrap: str, hops: int) -> None:
         if self._worker is not None:
             return  # already connected
+        identity_path = default_identity_path()
+        # One identity, one window: two processes sharing an identity file
+        # produce one peer ID twice — messages split unpredictably.
+        self._lock = QLockFile(identity_path + ".lock")
+        if not self._lock.tryLock(0):
+            self.connect_failed.emit(
+                "该身份已被另一个窗口使用。\n多开请为每个窗口设置独立的 NP4_IDENTITY_PATH。"
+            )
+            return
         config = {
             "port": 0,
-            "identity_path": default_identity_path(),
+            "identity_path": identity_path,
             "bootstrap": bootstrap,
             "hops": hops,
             "rendezvous": "np4-network",
@@ -92,6 +104,10 @@ class ChatController(QObject):
         if self._worker is None:
             self.send_completed.emit(text, "尚未连接")
             return
+        if dest not in self._contacts:
+            # Silent-loss territory: the mix accepts the packet, but a dead
+            # or stale destination cannot be dialed — say so up front.
+            self.delivery_risk.emit(dest)
         self._worker.send(dest, text)
 
     def refresh_peers(self) -> None:
@@ -107,8 +123,16 @@ class ChatController(QObject):
     def _on_peers(self, peers: list) -> None:
         # Relays are infrastructure, not chat contacts — keep them out of the
         # destination picker (messaging the sole relay is impossible anyway;
-        # the protocol now says so explicitly).
-        contacts = [(pid, addrs) for pid, addrs, is_relay in peers if not is_relay]
+        # the protocol now says so explicitly). Dedupe by peer ID: duplicate
+        # records must not stack up in the picker.
+        contacts: list[tuple[str, list]] = []
+        seen: set[str] = set()
+        for pid, addrs, is_relay in peers:
+            if is_relay or pid in seen:
+                continue
+            seen.add(pid)
+            contacts.append((pid, addrs))
+        self._contacts = [pid for pid, _ in contacts]
         self.peers_updated.emit(contacts)
         self._maybe_selftest(contacts)
 

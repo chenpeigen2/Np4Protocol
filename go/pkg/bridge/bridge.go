@@ -236,13 +236,18 @@ func (m *Manager) Call(id int64, req []byte) (map[string]any, error) {
 			return nil, err
 		}
 		// Mark infrastructure: relays are not chat contacts, and messaging
-		// the sole relay is impossible (it cannot relay for itself). UIs
-		// filter them from destination pickers.
+		// the sole relay is impossible (it cannot relay for itself). The
+		// rendezvous query is transient (small DHTs occasionally return
+		// empty mid-flight), so the bootstrap's own ID is marked too — it
+		// is the relay in the single-server deployment, deterministically.
 		relays := map[peer.ID]bool{}
 		if relayChan, err := h.node.FindPeers(ctx, np4.RendezvousRelay); err == nil {
 			for pi := range relayChan {
 				relays[pi.ID] = true
 			}
+		}
+		if bootID, ok := h.node.BootstrapID(); ok {
+			relays[bootID] = true
 		}
 		list := make([]map[string]any, 0, len(peers))
 		for _, p := range peers {

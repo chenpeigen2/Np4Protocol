@@ -213,6 +213,7 @@ class MainWindow(QMainWindow):
         self.controller.peers_updated.connect(self._on_peers)
         self.controller.send_completed.connect(self._on_send_completed)
         self.controller.connect_failed.connect(self.connect_page.mark_failed)
+        self.controller.delivery_risk.connect(self._on_delivery_risk)
 
         if AUTOCONNECT:
             self.connect_page._emit_connect()
@@ -250,6 +251,15 @@ class MainWindow(QMainWindow):
         # Echo exactly what was sent — never whatever is in the box now.
         self._chat.add_outgoing(text)
         self._chat.clear_input()
+
+    def _on_delivery_risk(self, dest: str) -> None:
+        QMessageBox.warning(
+            self,
+            "可能无法送达",
+            f"对方 {dest[:24]}… 不在当前在线列表中：\n"
+            "对方可能已离线，或地址已过期。\n"
+            "消息仍会进入匿名队列，但大概率丢失——请从下拉框选择在线的对方。",
+        )
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt naming)
         self.controller.shutdown()
