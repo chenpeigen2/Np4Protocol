@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -19,24 +21,52 @@ const ecdhPubSize = 32
 
 type Identity struct {
 	priv     crypto.PrivKey
+	stdPriv  ed25519.PrivateKey
 	signPub  []byte // raw ed25519 public key (32 bytes)
-	ecdhPriv []byte // X25519 private (derived from ed25519 seed)
-	ecdhPub  []byte // X25519 public
+	ecdhPriv []byte // X25519 private of the CURRENT bucket subkey
+	ecdhPub  []byte // X25519 public of the CURRENT bucket subkey
+
+	// Forward-secrecy key schedule (rotation.go): random per-bucket subkeys
+	// with a persisted retention window. mu guards the window — it mutates
+	// on the rotation loop while send/receive paths read it.
+	mu           sync.RWMutex
+	rotKeys      []rotatedKey // current first, oldest last
+	bucketPeriod time.Duration
+	nowFn        func() time.Time
+	sidecarPath  string // empty = ephemeral (no persistence)
 }
+
+func nowDefault() time.Time { return time.Now() }
 
 func LoadOrCreate(path string) (*Identity, error) {
 	// Empty path = ephemeral in-memory identity (no persistence). Used by
-	// nodes created without WithIdentity (tests, ad-hoc CLI runs).
+	// nodes created without WithIdentity (tests, ad-hoc CLI runs). The
+	// subkey window still exists — it just never touches disk.
 	if path == "" {
 		_, edPriv, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			return nil, fmt.Errorf("generate ed25519: %w", err)
 		}
-		return fromSeed(edPriv.Seed())
+		id, err := fromSeed(edPriv.Seed())
+		if err != nil {
+			return nil, err
+		}
+		if err := id.initRotation(); err != nil {
+			return nil, fmt.Errorf("init key rotation: %w", err)
+		}
+		return id, nil
 	}
 
 	if data, err := os.ReadFile(path); err == nil {
-		return fromSeed(data)
+		id, err := fromSeed(data)
+		if err != nil {
+			return nil, err
+		}
+		id.sidecarPath = sidecarPath(path)
+		if err := id.initRotation(); err != nil {
+			return nil, fmt.Errorf("init key rotation: %w", err)
+		}
+		return id, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read identity: %w", err)
 	}
@@ -77,11 +107,36 @@ func LoadOrCreate(path string) (*Identity, error) {
 			if err != nil {
 				return nil, fmt.Errorf("read identity: %w", err)
 			}
-			return fromSeed(data)
+			id, err := fromSeed(data)
+			if err != nil {
+				return nil, err
+			}
+			id.sidecarPath = sidecarPath(path)
+			if err := id.initRotation(); err != nil {
+				return nil, fmt.Errorf("init key rotation: %w", err)
+			}
+			return id, nil
 		}
 		return nil, fmt.Errorf("create identity: %w", err)
 	}
-	return fromSeed(seed)
+	id, err := fromSeed(seed)
+	if err != nil {
+		return nil, err
+	}
+	id.sidecarPath = sidecarPath(path)
+	if err := id.initRotation(); err != nil {
+		return nil, fmt.Errorf("init key rotation: %w", err)
+	}
+	return id, nil
+}
+
+// now returns the (test-replaceable) wall clock. Callers hold the window
+// lock or run before concurrency starts.
+func (i *Identity) now() time.Time {
+	if i.nowFn != nil {
+		return i.nowFn()
+	}
+	return time.Now()
 }
 
 func fromSeed(seed []byte) (*Identity, error) {
@@ -94,24 +149,17 @@ func fromSeed(seed []byte) (*Identity, error) {
 		return nil, fmt.Errorf("convert to libp2p key: %w", err)
 	}
 
-	// Derive X25519 private scalar from the ed25519 seed.
-	// SHA-512 mirrors Ed25519's internal scalar derivation (RFC 8032 §5.1.5);
-	// do NOT simplify to seed[:32] or swap hash — that would leak Ed25519
-	// key structure into the X25519 scalar.
-	ecdhPriv, err := deriveX25519Priv(seed)
-	if err != nil {
-		return nil, err
-	}
-	ecdhPub, err := curve25519.X25519(ecdhPriv, curve25519.Basepoint)
-	if err != nil {
-		return nil, fmt.Errorf("derive x25519 pub: %w", err)
-	}
-
+	// The master ed25519 key never rotates: it IS the peer identity (address
+	// book, allowlist, record binding all hang off it). ECDH keys are random
+	// per-bucket subkeys (rotation.go) — deliberately NOT derived from the
+	// seed, so a stolen seed file cannot decrypt recorded history beyond the
+	// retention window.
 	return &Identity{
 		priv:     libp2pPriv,
+		stdPriv:  edPriv,
 		signPub:  append([]byte(nil), edPriv.Public().(ed25519.PublicKey)...),
-		ecdhPriv: ecdhPriv,
-		ecdhPub:  ecdhPub,
+		bucketPeriod: RotationPeriod,
+		nowFn:        nowDefault,
 	}, nil
 }
 
@@ -148,19 +196,31 @@ func (i *Identity) SigningPub() []byte {
 // marshaled form to the DHT (mirrors how /pk records store keys).
 func (i *Identity) SigningPubKey() crypto.PubKey { return i.priv.GetPublic() }
 
+// ECDHPub returns the CURRENT rotation bucket's X25519 public key — the one
+// being published and the one senders must use.
 func (i *Identity) ECDHPub() []byte {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
 	out := make([]byte, ecdhPubSize)
 	copy(out, i.ecdhPub)
 	return out
 }
 
+// ECDH computes X25519 against the CURRENT subkey private. Senders use this
+// (they address the receiver's current published key); receivers should scan
+// the retention window via ECDHPrivs instead — their key may have rotated
+// between the sender's fetch and the message's arrival.
 func (i *Identity) ECDH(theirPub []byte) ([]byte, error) {
 	if len(theirPub) != ecdhPubSize {
 		return nil, fmt.Errorf("invalid pubkey size: %d", len(theirPub))
 	}
+	i.mu.RLock()
+	defer i.mu.RUnlock()
 	return curve25519.X25519(i.ecdhPriv, theirPub)
 }
 
 func (i *Identity) HexShort() string {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
 	return hex.EncodeToString(i.ecdhPub[:4])
 }

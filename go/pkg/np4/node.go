@@ -214,6 +214,11 @@ type config struct {
 	// dummyRate is the cover-traffic mean in cells/s (Poisson). The library
 	// default is 0 (deterministic tests); production entrypoints set 0.5.
 	dummyRate float64
+
+	// testBucketPeriod shortens the identity key-rotation period. TEST-ONLY
+	// control knob (0 = production 24h): rotation e2e tests use second-scale
+	// buckets instead of waiting a day.
+	testBucketPeriod time.Duration
 }
 
 // WithIdentity loads (or creates) the node's identity from path.
@@ -270,6 +275,13 @@ func WithContactRefreshInterval(d time.Duration) Option {
 // cell) and receivers drop them before the dedup cache.
 func WithDummyRate(rate float64) Option { return func(c *config) { c.dummyRate = rate } }
 
+// WithTestBucketPeriod shortens the identity key-rotation period. TEST-ONLY
+// control knob (0 = production 24h): rotation e2e tests use second-scale
+// buckets instead of waiting a day. Never enable in production.
+func WithTestBucketPeriod(d time.Duration) Option {
+	return func(c *config) { c.testBucketPeriod = d }
+}
+
 // NewNode creates a Node. Without WithBootstrap, the node runs in direct-only
 // mode (no mix routing, no DHT). With WithBootstrap, it joins the DHT and
 // routes Send calls through the mix.
@@ -282,6 +294,12 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 	id, err := identity.LoadOrCreate(cfg.identityPath)
 	if err != nil {
 		return nil, fmt.Errorf("identity: %w", err)
+	}
+	if cfg.testBucketPeriod > 0 {
+		id.SetTestRotation(nil, cfg.testBucketPeriod)
+		if _, err := id.EnsureCurrentBucket(); err != nil {
+			return nil, fmt.Errorf("test rotation: %w", err)
+		}
 	}
 	// Connection-level admission: an unadmitted peer cannot even complete a
 	// handshake with this node, so a gated bootstrap keeps outsiders out of
@@ -354,6 +372,8 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 		// Cover traffic on the Poisson schedule (rate 0 = off, the library
 		// default; production entrypoints enable it).
 		go n.dummyLoop()
+		// Key rotation + record republish (forward secrecy schedule).
+		go n.rotationLoop()
 
 		// A standalone DHT server (seed node) has no onion-path consumers; it
 		// only serves records. Skip the path selector so Send falls back to
@@ -384,6 +404,10 @@ func (n *Node) BootstrapID() (peer.ID, bool) {
 
 // ID returns the node's libp2p peer ID.
 func (n *Node) ID() peer.ID { return n.host.ID() }
+
+// CurrentBucket exposes the identity's active rotation bucket (observability
+// and tests).
+func (n *Node) CurrentBucket() int64 { return n.identity.CurrentBucket() }
 
 // Host returns the underlying libp2p host (for tests and low-level access).
 func (n *Node) Host() host.Host { return n.host }
@@ -791,11 +815,47 @@ func (n *Node) ServeRelay() error {
 		return fmt.Errorf("wait for DHT peers: %w", err)
 	}
 	p2p.AdvertiseRendezvousTTL(n.ctx, n.dht, RendezvousRelay, relayAdvertiseTTL)
-	if err := pathsel.PublishKey(n.ctx, n.dht, n.ID(), n.identity.SigningPubKey()); err != nil {
+	if err := n.publishKeyRecord(); err != nil {
 		return fmt.Errorf("publish key: %w", err)
 	}
 	p2p.AdvertiseRendezvousTTL(n.ctx, n.dht, RendezvousPeers, peerAdvertiseTTL)
 	return nil
+}
+
+// publishKeyRecord publishes the current rotation record (master-bound,
+// signed subkey) to the DHT.
+func (n *Node) publishKeyRecord() error {
+	pub, bucket := n.identity.RotationPub()
+	return pathsel.PublishKey(n.ctx, n.dht, n.ID(), n.identity.SigningPubKey(), pub, bucket, n.identity.Sign)
+}
+
+// rotationLoop keeps the published record aligned with the key schedule:
+// on each tick it rotates the subkey if the bucket rolled over (republishing
+// the fresh key) and republishes regardless — DHT records carry a finite
+// EOL, so a node that never republishes goes unreachable after a day. All
+// failures are silent: the next tick retries once the DHT is reachable.
+func (n *Node) rotationLoop() {
+	if n.dht == nil {
+		return
+	}
+	tick := 15 * time.Minute
+	// Short test buckets need proportionally faster rotation checks.
+	if p := n.identity.BucketPeriod(); p/2 < tick {
+		tick = p / 2
+	}
+	ticker := time.NewTicker(tick)
+	defer ticker.Stop()
+	for {
+		if rotated, err := n.identity.EnsureCurrentBucket(); err == nil && rotated {
+			fmt.Fprintf(os.Stderr, "[np4] key rotated: subkey for bucket %d published\n", n.identity.CurrentBucket())
+		}
+		_ = n.publishKeyRecord()
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 // PublishKeys publishes this node's ed25519 key to the DHT so other peers can
@@ -813,7 +873,7 @@ func (n *Node) PublishKeys() error {
 	if err := n.waitForDHTPeers(waitCtx, 1); err != nil {
 		return fmt.Errorf("wait for DHT peers: %w", err)
 	}
-	if err := pathsel.PublishKey(n.ctx, n.dht, n.ID(), n.identity.SigningPubKey()); err != nil {
+	if err := n.publishKeyRecord(); err != nil {
 		return fmt.Errorf("publish key: %w", err)
 	}
 	// Advertise under the peers rendezvous so ListPeers (client peer pickers)

@@ -117,16 +117,21 @@ func TestTagDeterministic(t *testing.T) {
 	}
 }
 
-// TestVerifyRejectsBadKeySizes: malformed inputs must error (not panic) so a
-// contact scan can skip them.
-func TestVerifyRejectsBadKeySizes(t *testing.T) {
+// TestVerifyRejectsBadInputs: malformed inputs must not panic. A bad tag is
+// an error; an unusable sender key simply never verifies (false, nil) so the
+// receiver's contact scan can skip it.
+func TestVerifyRejectsBadInputs(t *testing.T) {
 	a, b := newID(t, "a"), newID(t, "b")
 	msgID := bytes.Repeat([]byte{0x07}, 16)
 	if _, err := Verify(b, a.ECDHPub(), a.PeerID(), msgID, nil, make([]byte, 8)); err == nil {
 		t.Fatal("short tag accepted")
 	}
-	if _, err := Verify(b, make([]byte, 31), a.PeerID(), msgID, nil, make([]byte, TagSize)); err == nil {
-		t.Fatal("short sender pub accepted")
+	ok, err := Verify(b, make([]byte, 31), a.PeerID(), msgID, nil, make([]byte, TagSize))
+	if err != nil {
+		t.Fatalf("bad sender pub must be skipped, not errored: %v", err)
+	}
+	if ok {
+		t.Fatal("bad sender pub verified")
 	}
 	if _, err := Tag(a, make([]byte, 10), b.PeerID(), msgID, nil); err == nil {
 		t.Fatal("short receiver pub accepted")

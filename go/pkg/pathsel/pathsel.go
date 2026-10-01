@@ -14,11 +14,9 @@ import (
 	"math/big"
 	"time"
 
-	"Np4Protocol/go/pkg/identity"
 	"Np4Protocol/go/pkg/onion"
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
-	ic "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 )
@@ -153,46 +151,16 @@ func (f *DHTFinder) lookupKey(ctx context.Context, pid peer.ID) ([]byte, error) 
 	return GetKey(ctx, f.DHT, pid)
 }
 
-// PublishKey stores a node's ed25519 public key in the DHT under
-// /np4/ecdh/<peerID>. The DHT never verifies record signatures, so the
-// validator's IDFromPublicKey-vs-key binding is the ONLY thing preventing
-// poisoning — the stored key must be the publisher's own. Callers pass
-// id.SigningPubKey().
-func PublishKey(ctx context.Context, d *dht.IpfsDHT, pid peer.ID, pubKey ic.PubKey) error {
-	if pubKey == nil {
-		return errors.New("nil public key")
-	}
-	value, err := ic.MarshalPublicKey(pubKey)
-	if err != nil {
-		return err
-	}
-	key := ecdhKeyPrefix + base32.StdEncoding.EncodeToString([]byte(pid))
-	return d.PutValue(ctx, key, value)
-}
-
-// GetKey reads a peer's published ed25519 key from the DHT, verifies the
-// peer-ID binding client-side (defense in depth on top of the validator),
-// and converts it to the X25519 pubkey used for onion layers.
+// GetKey reads a peer's rotation record from the DHT and returns the
+// verified current X25519 subkey: framing, master-key peer-ID binding (the
+// anti-poisoning defense, unchanged since v1) and the master's signature
+// over the subkey all verify before the key is trusted. A sender uses this
+// key for the final onion layer AND the sender-auth tag.
 func GetKey(ctx context.Context, d *dht.IpfsDHT, pid peer.ID) ([]byte, error) {
 	key := ecdhKeyPrefix + base32.StdEncoding.EncodeToString([]byte(pid))
 	value, err := d.GetValue(ctx, key)
 	if err != nil {
 		return nil, err
 	}
-	pubKey, err := ic.UnmarshalPublicKey(value)
-	if err != nil {
-		return nil, fmt.Errorf("unmarshal published key: %w", err)
-	}
-	bound, err := peer.IDFromPublicKey(pubKey)
-	if err != nil {
-		return nil, err
-	}
-	if bound != pid {
-		return nil, fmt.Errorf("published key binds to %s, wanted %s", bound, pid)
-	}
-	raw, err := pubKey.Raw()
-	if err != nil || len(raw) != 32 {
-		return nil, fmt.Errorf("unexpected published key material (len=%d, err=%v)", len(raw), err)
-	}
-	return identity.Ed25519PubToX25519(raw)
+	return ParseRotationRecord(pid, value)
 }

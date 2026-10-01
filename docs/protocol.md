@@ -15,8 +15,8 @@ Np4Protocol is a Mixnet-based anonymous communication protocol designed for meta
 
 **已知边界（不解决，见 [v2]）**：
 
-- 静态长期 ECDH key，无 forward secrecy（[M4] 时间桶轮换）。
 - Cover traffic 只 flatten 发送侧速率，不防 GPA 时序关联（威胁模型声明的边界）。
+- 前向保密窗口 = 7 天保留期：超过 7 天前录制的流量在密钥文件泄露后不可解，但**主密钥（peer ID）本身不轮换**——针对主密钥的主动持久攻击者仍可冒充未来流量（无 post-compromise security）。
 - 开放准入模式（无 --allowlist）下无抗 Sybil：攻击者可注册大量 relay 吸路径。
 - Replay 防线依赖内存缓存（eph_pub LRU 100k + msg_id 去重 100k）：重启清零、淘汰后窗口重开；去重保证不重复投递，残余风险为容量挤占，评估低危（2026-10-01 审查备案）。
 
@@ -95,11 +95,27 @@ layer_ciphertext = eph_pub(32) ‖ nonce(12) ‖ ChaCha20-Poly1305(flag ‖ rout
 - **Replay**：relay 记录已见 `eph_pub`（LRU 上限 100k 条 ≈ 3.2MB），重复即丢弃；`msg_id` 去重是端到端兜底。只在解密成功后才计入缓存，垃圾洪泛无法驱逐合法条目。
 - **降级语义**：`Send` 永不静默 fallback 到 direct；`SendDirect` 是显式 API（CLI `--insecure`）。
 
-## Key 记录（DHT）
+## Key 记录（DHT）v2
 
-- 记录 value = 节点 **ed25519 公钥**（libp2p 编码），key = `/np4/ecdh/<base32(peer multihash)>`。
-- Validator 强制 `IDFromPublicKey(value) == key 中的 peerID`——DHT 不验签名，此绑定是唯一防毒化机制，**不可移除**；配置 allowlist 时，validator 额外拒绝名单外 peer 的发布（纵深防御，连接门为主）。
-- 发送端本地将 ed25519 pub 双有理映射换算为 X25519 pub（与 NaCl 派生兼容）。
+```
+/np4/ecdh/<base32(peer multihash)>  →  value = master_marshaled(36B) ‖ bucket(8B BE) ‖ x25519_pub(32B) ‖ sig(64B)
+```
+
+- `master_marshaled`：节点 **ed25519 主公钥**（libp2p 编码）。Validator 强制 `IDFromPublicKey(master) == 记录中的 peerID`——DHT 不验签名，此绑定仍是唯一防毒化机制，**不可移除**；配置 allowlist 时，validator 额外拒绝名单外 peer 的发布（纵深防御，连接门为主）。主密钥永不轮换（peer ID = 通讯录/allowlist 的锚）。
+- `x25519_pub`：**当前轮换桶的 X25519 子密钥**（见「密钥轮换」），发送端直接用于洋葱末跳与 sender-auth tag。
+- `sig`：主私钥对 `"np4-rotation-v1" ‖ bucket ‖ x25519_pub` 的 Ed25519 签名——防止任何人替别人发布子密钥。
+- Validator 与 GetKey 端侧均走同一解析：框架 → 绑定 → 验签，全过才算数。
+
+## 密钥轮换 **[must]**
+
+前向保密通过时间桶子密钥实现：
+
+- **周期**：每 24h 生成**全新随机** X25519 密钥对（非从主种子派生——派生会让历史子密钥可从种子重算，前向保密失效）；私钥保留 7 天后销毁。
+- **性质**：录流攻击者今日窃取密钥文件，最多解密近 7 天的流量；离线 ≤7 天的接收端回来仍能解密发往旧子密钥的消息。peer ID、地址簿、allowlist 全部不受影响。
+- **接收路径**：洋葱解密与 tag 验证都尝试保留窗内全部子密钥（当前优先，热路径代价一次 X25519+AEAD）。
+- **发布**：节点每 15 分钟检查桶边界并重发布记录——同时修掉了 v1 的隐患（记录 EOL 有限，长跑节点 24h 后不可达）。
+- **已知边界**：跨桶瞬间（联系缓存 30s 刷新窗口内）的 tag 可能 miss → 显示"未验证"徽标；洋葱机密性不受影响。
+- 持久化：身份文件旁 `<path>.keys` sidecar（0600，原子写），崩溃/重启后保留窗完整。
 
 ## Node Types
 
@@ -137,8 +153,10 @@ v1 仅使用 `TypeAsync`（mix 送达）与 direct JSON 消息（`--insecure`）
 
 ## [v2] Roadmap
 
-- [M4] Forward secrecy：时间桶子密钥（24h 轮换 / 7d 保留，复用 PublishKeys 通道）。
 - 端到端 ACK（回程 onion 路径）。
+- 文件分块协议（>4061B 目前硬失败 ErrTooLarge）。
+- Presence / 离线存储转发。
+- 多 relay 部署下的 cover traffic relay 侧注入（当前仅入口侧；单 relay 拓扑下 relay 侧注入无增益）。
 - Key rotation / forward secrecy（与 DHT record TTL 耦合）。
 - 文件传输分块协议。
 - Presence / 离线存储转发（依赖 dummy traffic 先行）。

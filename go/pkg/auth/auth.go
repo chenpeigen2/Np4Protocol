@@ -32,6 +32,7 @@ import (
 
 	"Np4Protocol/go/pkg/identity"
 
+	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/hkdf"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -57,26 +58,43 @@ func Tag(id *identity.Identity, theirPub []byte, theirID peer.ID, msgID, content
 	return mac(key, msgID, content), nil
 }
 
-// Verify recomputes the tag the sender would have produced (theirPub/theirID
-// on the sending side, id on the receiving side) and compares in constant
-// time. It returns false — not an error — on mismatch; errors are reserved
-// for unusable keys so a single bad contact cannot break the scan loop.
+// Verify recomputes the tag the sender would have produced and compares in
+// constant time. The receiver tries the WHOLE retained subkey window: the
+// sender addressed the receiver's then-current published key, which may be a
+// retained subkey after a rotation boundary. It returns false — not an
+// error — on mismatch; errors are reserved for unusable inputs so a single
+// bad contact cannot break the scan loop.
 func Verify(id *identity.Identity, senderPub []byte, senderID peer.ID, msgID, content, tag []byte) (bool, error) {
 	if len(tag) != TagSize {
 		return false, fmt.Errorf("%w: tag %d bytes, want %d", ErrBadPub, len(tag), TagSize)
 	}
-	key, err := pairwiseKey(id, senderPub, senderID)
-	if err != nil {
-		return false, err
+	a, b := id.PeerID().String(), senderID.String()
+	if a > b {
+		a, b = b, a
 	}
-	expected := mac(key, msgID, content)
-	return hmac.Equal(expected, tag), nil
+	info := []byte(a + "|" + b)
+	for _, priv := range id.ECDHPrivs() {
+		shared, err := curve25519.X25519(priv, senderPub)
+		if err != nil {
+			continue // low-order or malformed sender key: skip the contact
+		}
+		key := make([]byte, 32)
+		h := hkdf.New(sha256.New, shared, []byte(saltString), info)
+		if _, err := h.Read(key); err != nil {
+			return false, err
+		}
+		if hmac.Equal(mac(key, msgID, content), tag) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
-// pairwiseKey derives the direction-independent shared key. Sender and
-// receiver each run X25519 with their own private key against the other's
-// published public key; ECDH symmetry gives both the same shared secret, and
-// the sorted-pair HKDF info makes the key useless outside this exact pair.
+// pairwiseKey derives the direction-independent shared key from the CURRENT
+// subkey. Sender and receiver each run X25519 with their own private key
+// against the other's published public key; ECDH symmetry gives both the
+// same shared secret, and the sorted-pair HKDF info makes the key useless
+// outside this exact pair.
 func pairwiseKey(id *identity.Identity, theirPub []byte, theirID peer.ID) ([]byte, error) {
 	shared, err := id.ECDH(theirPub)
 	if err != nil {

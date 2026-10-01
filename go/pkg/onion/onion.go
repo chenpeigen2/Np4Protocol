@@ -189,24 +189,40 @@ func decryptLayer(packet []byte, id *identity.Identity) ([]byte, error) {
 	ephPub := packet[:ephPubSize]
 	nonce := packet[ephPubSize : ephPubSize+nonceSize]
 	ciphertext := packet[ephPubSize+nonceSize:]
+	info := []byte(id.PeerID())
 
-	shared, err := id.ECDH(ephPub)
-	if err != nil {
-		return nil, err
+	// Try the retained subkey window: the sender addressed whichever subkey
+	// was current when it fetched our record — normally the current one,
+	// occasionally a retained one across a rotation boundary. Keys are tried
+	// current-first so the hot path pays one X25519 + one AEAD.
+	var lastErr error
+	for _, priv := range id.ECDHPrivs() {
+		shared, err := curve25519.X25519(priv, ephPub)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		key, err := deriveKey(shared, info)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		aead, err := chacha20poly1305.New(key)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return plaintext, nil
 	}
-	key, err := deriveKey(shared, []byte(id.PeerID()))
-	if err != nil {
-		return nil, err
+	if lastErr == nil {
+		lastErr = errors.New("no retained subkey matched")
 	}
-	aead, err := chacha20poly1305.New(key)
-	if err != nil {
-		return nil, err
-	}
-	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, err
-	}
-	return plaintext, nil
+	return nil, lastErr
 }
 
 func deriveKey(shared, info []byte) ([]byte, error) {

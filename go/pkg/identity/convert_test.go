@@ -2,26 +2,52 @@ package identity
 
 import (
 	"bytes"
-	"path/filepath"
+	"crypto/ed25519"
+	"crypto/rand"
 	"testing"
+
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"golang.org/x/crypto/curve25519"
 )
 
-// TestEd25519ToX25519MatchesDerivedKey is the load-bearing correctness test
-// for the DHT key-binding scheme: the X25519 pubkey obtained by converting
-// the published ed25519 pubkey MUST equal the one derived from the seed
-// (NaCl-compatible derivation).
+// TestEd25519ToX25519MatchesDerivedKey pins the NaCl-compatible mapping:
+// converting a marshaled ed25519 pubkey equals deriving X25519 from the seed
+// scalar (RFC 8032 §5.1.5 + RFC 7748 clamp). Since rotation (M4) this
+// conversion is no longer the DHT key-delivery path — records carry subkeys
+// signed by the master key — but the mapping itself must stay correct for
+// any code that still relies on it.
 func TestEd25519ToX25519MatchesDerivedKey(t *testing.T) {
 	for i := 0; i < 8; i++ {
-		id, err := LoadOrCreate(filepath.Join(t.TempDir(), "id"))
+		_, edPriv, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
-			t.Fatalf("identity %d: %v", i, err)
+			t.Fatalf("key %d: %v", i, err)
 		}
-		converted, err := Ed25519PubToX25519(id.SigningPub())
+		libp2pPriv, _, err := crypto.KeyPairFromStdKey(&edPriv)
+		if err != nil {
+			t.Fatalf("wrap %d: %v", i, err)
+		}
+		raw, ok := libp2pPriv.GetPublic().(*crypto.Ed25519PublicKey)
+		if !ok {
+			t.Fatalf("key %d: not an ed25519 key", i)
+		}
+		rawBytes, err := raw.Raw()
+		if err != nil {
+			t.Fatalf("key %d: raw: %v", i, err)
+		}
+		converted, err := Ed25519PubToX25519(rawBytes)
 		if err != nil {
 			t.Fatalf("convert %d: %v", i, err)
 		}
-		if !bytes.Equal(converted, id.ECDHPub()) {
-			t.Fatalf("identity %d: converted X25519 pub does not match derived pub", i)
+		fromSeedScalar, err := deriveX25519Priv(edPriv.Seed())
+		if err != nil {
+			t.Fatalf("derive %d: %v", i, err)
+		}
+		expected, err := curve25519.X25519(fromSeedScalar, curve25519.Basepoint)
+		if err != nil {
+			t.Fatalf("x25519 %d: %v", i, err)
+		}
+		if !bytes.Equal(converted, expected) {
+			t.Fatalf("key %d: converted X25519 pub does not match seed-derived pub", i)
 		}
 	}
 }

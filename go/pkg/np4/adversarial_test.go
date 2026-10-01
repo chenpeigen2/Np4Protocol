@@ -293,21 +293,24 @@ func TestAdversarialTruncatedStreamNoPanic(t *testing.T) {
 	time.Sleep(2 * time.Second) // handler must have hit EOF and returned.
 }
 
-// TestAdversarialDHTPoisoningBlocked: publishing a key under a peer ID that
-// is not the publisher's must fail at PutValue time — the validator's
-// IDFromPublicKey binding is the only signature-independent defense.
+// TestAdversarialDHTPoisoningBlocked: publishing a key record under a peer
+// ID that is not the publisher's must fail at PutValue time — the master-key
+// binding (IDFromPublicKey(master) == claimed ID) is the only
+// signature-independent defense, and the attacker's own signature doesn't
+// help them (their master key hashes to THEIR id, not the victim's).
 func TestAdversarialDHTPoisoningBlocked(t *testing.T) {
 	an := newAdversarialNet(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	err := pathsel.PublishKey(ctx, an.sender.DHT(), an.recv.ID(), an.sender.identity.SigningPubKey())
+	pub, bucket := an.sender.identity.RotationPub()
+	err := pathsel.PublishKey(ctx, an.sender.DHT(), an.recv.ID(), an.sender.identity.SigningPubKey(), pub, bucket, an.sender.identity.Sign)
 	if err == nil {
 		t.Fatal("poisoned PutValue accepted: attacker key stored under victim's peer ID")
 	}
 
 	// And the victim's real key must still resolve correctly.
-	pub, err := pathsel.GetKey(ctx, an.sender.DHT(), an.recv.ID())
+	pub, err = pathsel.GetKey(ctx, an.sender.DHT(), an.recv.ID())
 	if err != nil {
 		t.Fatalf("legitimate key lookup failed after poisoning attempt: %v", err)
 	}

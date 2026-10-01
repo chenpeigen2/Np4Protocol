@@ -4,6 +4,8 @@ import (
 	"encoding/base32"
 	"testing"
 
+	"Np4Protocol/go/pkg/pathsel"
+
 	ic "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
@@ -16,6 +18,28 @@ func keyFor(t *testing.T, pid peer.ID) string {
 	return "/np4/ecdh/" + base32.StdEncoding.EncodeToString([]byte(pid))
 }
 
+// rotationRecordFor frames a v2 key record: master pub (binding anchor) +
+// current subkey + master signature. The key's own public bytes stand in for
+// the subkey — the validator treats the subkey as opaque bytes.
+func rotationRecordFor(t *testing.T, priv ic.PrivKey) []byte {
+	t.Helper()
+	raw, err := priv.GetPublic().Raw()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := pathsel.EncodeRotationRecord(priv.GetPublic(), 0, raw, func(msg []byte) []byte {
+		sig, err := priv.Sign(msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sig
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
 func TestNp4ValidatorAcceptsBoundKey(t *testing.T) {
 	priv, _, err := ic.GenerateEd25519Key(nil)
 	if err != nil {
@@ -25,18 +49,17 @@ func TestNp4ValidatorAcceptsBoundKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, err := ic.MarshalPublicKey(priv.GetPublic())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := (np4Validator{}).Validate(keyFor(t, pid), value); err != nil {
+	if err := (np4Validator{}).Validate(keyFor(t, pid), rotationRecordFor(t, priv)); err != nil {
 		t.Fatalf("valid record rejected: %v", err)
 	}
 }
 
 // TestNp4ValidatorRejectsPoisoning: the load-bearing anti-poisoning test — a
-// record signed by an attacker under a victim's key must be rejected. The DHT
-// never verifies signatures, so this binding is the only defense.
+// record whose master key hashes to a DIFFERENT peer ID must be rejected,
+// regardless of a valid signature. The DHT never verifies signatures; the
+// binding is the defense. (An attacker literally cannot produce a record
+// bound to the victim's ID: that would require a master key hashing to the
+// victim's peer ID, and the signature proves possession of it anyway.)
 func TestNp4ValidatorRejectsPoisoning(t *testing.T) {
 	attacker, _, err := ic.GenerateEd25519Key(nil)
 	if err != nil {
@@ -48,12 +71,38 @@ func TestNp4ValidatorRejectsPoisoning(t *testing.T) {
 	}
 	victimID, _ := peer.IDFromPrivateKey(victim)
 
-	value, err := ic.MarshalPublicKey(attacker.GetPublic())
+	if err := (np4Validator{}).Validate(keyFor(t, victimID), rotationRecordFor(t, attacker)); err == nil {
+		t.Fatal("poisoned record accepted: attacker key stored under victim's ID")
+	}
+}
+
+// TestNp4ValidatorRejectsForgery: a record bound to the right peer ID but
+// signed by someone without the master private key must be rejected — the
+// signature check catches transplanted payloads.
+func TestNp4ValidatorRejectsForgery(t *testing.T) {
+	victim, _, err := ic.GenerateEd25519Key(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := (np4Validator{}).Validate(keyFor(t, victimID), value); err == nil {
-		t.Fatal("poisoned record accepted: attacker key stored under victim's ID")
+	attacker, _, err := ic.GenerateEd25519Key(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	victimID, _ := peer.IDFromPrivateKey(victim)
+	attackerRaw, err := attacker.GetPublic().Raw()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Correct master (binding passes), attacker's signature over the subkey.
+	rec, err := pathsel.EncodeRotationRecord(victim.GetPublic(), 0, attackerRaw, func(msg []byte) []byte {
+		sig, _ := attacker.Sign(msg)
+		return sig
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (np4Validator{}).Validate(keyFor(t, victimID), rec); err == nil {
+		t.Fatal("forged subkey signature accepted")
 	}
 }
 
@@ -66,6 +115,9 @@ func TestNp4ValidatorRejectsGarbage(t *testing.T) {
 	}
 	if err := (np4Validator{}).Validate(keyFor(t, pid), []byte("not a key")); err == nil {
 		t.Error("non-key value accepted")
+	}
+	if err := (np4Validator{}).Validate(keyFor(t, pid), rotationRecordFor(t, priv)[:10]); err == nil {
+		t.Error("truncated record accepted")
 	}
 	if _, err := (np4Validator{}).Select(keyFor(t, pid), nil); err == nil {
 		t.Error("Select with no values must error")
@@ -86,13 +138,6 @@ func TestNp4ValidatorAdmission(t *testing.T) {
 	}
 	insiderID, _ := peer.IDFromPrivateKey(insider)
 	outsiderID, _ := peer.IDFromPrivateKey(outsider)
-	val := func(k ic.PubKey) []byte {
-		value, err := ic.MarshalPublicKey(k)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return value
-	}
 
 	allowList := map[peer.ID]struct{}{insiderID: {}}
 	v := np4Validator{Admission: func(id peer.ID) bool {
@@ -100,14 +145,14 @@ func TestNp4ValidatorAdmission(t *testing.T) {
 		return ok
 	}}
 
-	if err := v.Validate(keyFor(t, insiderID), val(insider.GetPublic())); err != nil {
+	if err := v.Validate(keyFor(t, insiderID), rotationRecordFor(t, insider)); err != nil {
 		t.Errorf("admitted peer rejected: %v", err)
 	}
-	if err := v.Validate(keyFor(t, outsiderID), val(outsider.GetPublic())); err == nil {
+	if err := v.Validate(keyFor(t, outsiderID), rotationRecordFor(t, outsider)); err == nil {
 		t.Error("non-admitted peer accepted: allowlist has no teeth")
 	}
 
-	if err := (np4Validator{}).Validate(keyFor(t, outsiderID), val(outsider.GetPublic())); err != nil {
+	if err := (np4Validator{}).Validate(keyFor(t, outsiderID), rotationRecordFor(t, outsider)); err != nil {
 		t.Errorf("nil admission must allow all valid bindings, got %v", err)
 	}
 }

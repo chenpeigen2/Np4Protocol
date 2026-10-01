@@ -1,7 +1,6 @@
 package p2p
 
 import (
-	"bytes"
 	"context"
 	"encoding/base32"
 	"errors"
@@ -9,10 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"Np4Protocol/go/pkg/pathsel"
+
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	record "github.com/libp2p/go-libp2p-record"
 	"github.com/libp2p/go-libp2p-kad-dht/records"
-	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/discovery"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -78,21 +78,15 @@ func (v np4Validator) Validate(key string, value []byte) error {
 	if err != nil {
 		return fmt.Errorf("np4: key is not valid base32: %w", err)
 	}
-	pk, err := crypto.UnmarshalPublicKey(value)
-	if err != nil {
-		return fmt.Errorf("np4: value is not a libp2p public key: %w", err)
-	}
-	id, err := peer.IDFromPublicKey(pk)
-	if err != nil {
+	// Full record verification: framing, master-key peer-ID binding (the
+	// anti-poisoning defense), and the master's signature over the current
+	// subkey. Only verifiable bindings consume admission — a forged record
+	// dies here regardless of the list.
+	if _, err := pathsel.ParseRotationRecord(peer.ID(raw), value); err != nil {
 		return err
 	}
-	if !bytes.Equal(raw, []byte(id)) {
-		return fmt.Errorf("np4: public key binds to peer %s, wanted %s", id, peer.ID(raw))
-	}
-	// Only verifiable bindings consume admission: a forged record dies on
-	// the check above regardless of the list.
-	if v.Admission != nil && !v.Admission(id) {
-		return fmt.Errorf("np4: peer %s is not admitted to this network", id)
+	if v.Admission != nil && !v.Admission(peer.ID(raw)) {
+		return fmt.Errorf("np4: peer %s is not admitted to this network", peer.ID(raw))
 	}
 	return nil
 }
