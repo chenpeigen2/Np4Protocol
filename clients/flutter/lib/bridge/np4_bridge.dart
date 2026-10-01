@@ -116,10 +116,14 @@ abstract base class Np4TransportProxy implements Np4Transport {
 
 /// A discoverable, mix-addressable peer (published key verified server-side).
 class PeerEntry {
-  PeerEntry({required this.peerId, required this.addrs});
+  PeerEntry({required this.peerId, required this.addrs, required this.isRelay});
 
   final String peerId;
   final List<String> addrs;
+
+  /// True for relay infrastructure — not a chat contact; messaging the sole
+  /// relay is impossible (it cannot relay for itself).
+  final bool isRelay;
 }
 
 /// High-level client for one np4 node. Mix sends only — there is no direct
@@ -176,6 +180,7 @@ class Np4Client {
         .map((p) => PeerEntry(
               peerId: (p as Map)['peer_id'] as String,
               addrs: List<String>.from(p['addrs'] as List? ?? []),
+              isRelay: p['is_relay'] as bool? ?? false,
             ))
         .toList();
   }

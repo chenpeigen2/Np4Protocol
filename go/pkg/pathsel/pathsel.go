@@ -47,6 +47,11 @@ type Selector struct {
 	Finder Finder
 }
 
+// ErrDestIsOnlyRelay is returned when the destination itself is the only
+// eligible relay: the path cannot use the destination as its own intermediate
+// hop, so the request is impossible until more relays join.
+var ErrDestIsOnlyRelay = errors.New("destination is the only relay — it cannot relay for itself; add more relays or pick another destination")
+
 // Pick returns Hops distinct relay onion.Hops, excluding self and any peers
 // passed in exclude (typically the destination, to avoid trivial loops).
 func (s *Selector) Pick(ctx context.Context, self peer.ID, exclude ...peer.ID) ([]onion.Hop, error) {
@@ -63,10 +68,20 @@ func (s *Selector) Pick(ctx context.Context, self peer.ID, exclude ...peer.ID) (
 	for _, p := range exclude {
 		excluded[p] = struct{}{}
 	}
+	// The destination is the last exclude entry by convention (node.Send).
+	// With no exclude list there is no destination to special-case.
+	dest := peer.ID("")
+	if len(exclude) > 0 {
+		dest = exclude[len(exclude)-1]
+	}
+	destWasCandidate := false
 
 	eligible := make([]PeerInfo, 0, len(candidates))
 	for _, c := range candidates {
 		if _, skip := excluded[c.ID]; skip {
+			if len(exclude) > 0 && c.ID == dest {
+				destWasCandidate = true
+			}
 			continue
 		}
 		if len(c.ECDHPub) == 0 {
@@ -75,6 +90,9 @@ func (s *Selector) Pick(ctx context.Context, self peer.ID, exclude ...peer.ID) (
 		eligible = append(eligible, c)
 	}
 	if len(eligible) < s.Hops {
+		if destWasCandidate && len(eligible) == 0 && s.Hops == 1 {
+			return nil, fmt.Errorf("%w", ErrDestIsOnlyRelay)
+		}
 		return nil, fmt.Errorf("%w: have %d, want %d", ErrNotEnoughRelays, len(eligible), s.Hops)
 	}
 

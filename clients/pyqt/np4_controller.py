@@ -105,8 +105,12 @@ class ChatController(QObject):
         self.node_ready.emit(node)
 
     def _on_peers(self, peers: list) -> None:
-        self.peers_updated.emit(peers)
-        self._maybe_selftest(peers)
+        # Relays are infrastructure, not chat contacts — keep them out of the
+        # destination picker (messaging the sole relay is impossible anyway;
+        # the protocol now says so explicitly).
+        contacts = [(pid, addrs) for pid, addrs, is_relay in peers if not is_relay]
+        self.peers_updated.emit(contacts)
+        self._maybe_selftest(contacts)
 
     def _on_send_done(self, dest: str, text: str, error: str) -> None:
         self.send_completed.emit(text, error)

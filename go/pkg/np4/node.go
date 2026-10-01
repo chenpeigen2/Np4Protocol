@@ -320,6 +320,12 @@ func (n *Node) pickPath(ctx context.Context, dest peer.ID) ([]onion.Hop, error) 
 		if time.Now().After(deadline) {
 			return nil, lastErr
 		}
+		// A dropped bootstrap connection empties the routing table, and
+		// FindPeers against an empty table returns instantly-empty — no
+		// amount of plain retrying fixes that. Kick the DHT back to life.
+		if n.dht.RoutingTable().Size() == 0 {
+			_ = n.dht.Bootstrap(n.ctx)
+		}
 		select {
 		case <-n.ctx.Done():
 			return nil, n.ctx.Err()
@@ -630,7 +636,7 @@ func (n *Node) ServeRelay() error {
 	if err := n.waitForDHTPeers(waitCtx, 1); err != nil {
 		return fmt.Errorf("wait for DHT peers: %w", err)
 	}
-	p2p.AdvertiseRendezvousTTL(n.ctx, n.dht, "np4-relay", relayAdvertiseTTL)
+	p2p.AdvertiseRendezvousTTL(n.ctx, n.dht, RendezvousRelay, relayAdvertiseTTL)
 	if err := pathsel.PublishKey(n.ctx, n.dht, n.ID(), n.identity.SigningPubKey()); err != nil {
 		return fmt.Errorf("publish key: %w", err)
 	}
@@ -691,9 +697,12 @@ func (n *Node) Stop() { _ = n.Close() }
 
 // RendezvousPeers is the rendezvous under which every key-publishing node
 // advertises itself, making the set of addressable peers discoverable via
-// ListPeers. Relays additionally advertise the np4-relay rendezvous for path
+// ListPeers. Relays additionally advertise RendezvousRelay for path
 // selection.
 const RendezvousPeers = "np4-peers"
+
+// RendezvousRelay is the relay-discovery rendezvous used by path selection.
+const RendezvousRelay = "np4-relay"
 
 // ListPeers returns the addressable peers discovered via the np4-peers
 // rendezvous, excluding self. A peer is only listed when its published key

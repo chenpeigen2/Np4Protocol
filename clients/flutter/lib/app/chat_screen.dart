@@ -52,9 +52,10 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final peers = await widget.client.listPeers();
       if (!mounted) return;
+      // Relays are infrastructure, not chat contacts.
       setState(() => _peers
         ..clear()
-        ..addAll(peers));
+        ..addAll(peers.where((p) => !p.isRelay)));
       debugPrint('[np4] peers online: ${_peers.length}');
     } catch (_) {
       // Transient DHT state; the next refresh retries.

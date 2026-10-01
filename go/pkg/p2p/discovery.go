@@ -11,6 +11,7 @@ import (
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	record "github.com/libp2p/go-libp2p-record"
+	"github.com/libp2p/go-libp2p-kad-dht/records"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/discovery"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -91,6 +92,13 @@ func (np4Validator) Select(key string, values [][]byte) (int, error) {
 	return 0, nil
 }
 
+// providerRecordValidity bounds how long rendezvous provider records live on
+// the DHT. kad-dht ignores discovery.TTL for provider records (it is only an
+// advisory return value) and defaults to 48h — without this, killed nodes
+// haunt peer/relay lists for two days. Our republish loops run at half-TTL,
+// so live nodes stay fresh while dead ones vanish within ~5 minutes.
+const providerRecordValidity = 5 * time.Minute
+
 // StartDHT creates a DHT instance, registers the np4 record validator (which
 // enforces the record↔peer binding — the DHT does not verify signatures, so
 // this check is the only defense against key poisoning), sets server mode so
@@ -105,6 +113,7 @@ func StartDHT(ctx context.Context, h host.Host, bootstrapPeers []peer.AddrInfo) 
 	kademliaDHT, err := dht.New(ctx, h,
 		dht.BootstrapPeers(bootstrapPeers...),
 		dht.Mode(dht.ModeServer),
+		dht.ProviderManagerOpts(records.ProvideValidity(providerRecordValidity)),
 	)
 	if err != nil {
 		return nil, err

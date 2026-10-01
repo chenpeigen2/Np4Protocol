@@ -72,6 +72,7 @@ class BridgeWorker(QThread):
                         bridge.call(handle, "send", {"dest": dest, "content_b64": content})
                     except Np4BridgeError as e:
                         error = str(e)
+                        print(f"[np4] send to {dest[:20]}… failed: {error}", flush=True)
                     self.send_done.emit(dest, text, error)
                 elif kind == "refresh_peers":
                     self._refresh_peers(bridge, handle)
@@ -93,6 +94,10 @@ class BridgeWorker(QThread):
             res = bridge.call(handle, "list_peers")
         except Np4BridgeError:
             return
-        peers = [(p["peer_id"], p.get("addrs", [])) for p in res.get("peers", [])]
-        print(f"[np4] peers online: {len(peers)}", flush=True)
+        peers = [
+            (p["peer_id"], p.get("addrs", []), p.get("is_relay", False))
+            for p in res.get("peers", [])
+        ]
+        relays = sum(1 for *_, r in peers if r)
+        print(f"[np4] peers online: {len(peers) - relays} contacts, {relays} relays", flush=True)
         self.peers_ready.emit(peers)

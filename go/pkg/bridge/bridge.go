@@ -229,17 +229,27 @@ func (m *Manager) Call(id int64, req []byte) (map[string]any, error) {
 		return map[string]any{"events": events, "dropped": dropped}, nil
 
 	case "list_peers":
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		defer cancel()
 		peers, err := h.node.ListPeers(ctx)
 		if err != nil {
 			return nil, err
 		}
+		// Mark infrastructure: relays are not chat contacts, and messaging
+		// the sole relay is impossible (it cannot relay for itself). UIs
+		// filter them from destination pickers.
+		relays := map[peer.ID]bool{}
+		if relayChan, err := h.node.FindPeers(ctx, np4.RendezvousRelay); err == nil {
+			for pi := range relayChan {
+				relays[pi.ID] = true
+			}
+		}
 		list := make([]map[string]any, 0, len(peers))
 		for _, p := range peers {
 			list = append(list, map[string]any{
-				"peer_id": p.ID.String(),
-				"addrs":   p.Addrs,
+				"peer_id":  p.ID.String(),
+				"addrs":    p.Addrs,
+				"is_relay": relays[p.ID],
 			})
 		}
 		return map[string]any{"peers": list}, nil
