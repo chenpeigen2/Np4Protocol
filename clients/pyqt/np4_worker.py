@@ -1,7 +1,7 @@
 """QThread worker owning the native bridge — the Qt UI thread never blocks.
 
 Same architecture as the Flutter engine isolate: every ctypes call happens on
-this thread; the UI talks to it through signals and a request queue.
+this thread; the controller talks to it through signals and a request queue.
 """
 
 from __future__ import annotations
@@ -23,7 +23,10 @@ class BridgeWorker(QThread):
     node_ready = pyqtSignal(dict)  # {handle, peer_id, addrs}
     state_changed = pyqtSignal(str)
     message_received = pyqtSignal(str, str)  # sender, content
-    send_done = pyqtSignal(str)  # error text, empty on success
+    # dest, text, error ('' = success). Carrying the exact text through the
+    # worker lets the UI echo what was SENT, not whatever happens to be in
+    # the input box by the time the ack comes back.
+    send_done = pyqtSignal(str, str, str)
     peers_ready = pyqtSignal(list)  # [(peer_id, addrs)]
     failed = pyqtSignal(str)
 
@@ -61,14 +64,15 @@ class BridgeWorker(QThread):
                 try:
                     kind, (dest, text) = self._requests.get_nowait()
                 except queue.Empty:
-                    kind = None
+                    kind, dest, text = None, "", ""
                 if kind == "send":
+                    error = ""
                     try:
                         content = base64.b64encode(text.encode()).decode()
                         bridge.call(handle, "send", {"dest": dest, "content_b64": content})
-                        self.send_done.emit("")
                     except Np4BridgeError as e:
-                        self.send_done.emit(str(e))
+                        error = str(e)
+                    self.send_done.emit(dest, text, error)
                 elif kind == "refresh_peers":
                     self._refresh_peers(bridge, handle)
                     last_peers = time.monotonic()
