@@ -1,0 +1,30 @@
+services:
+  np4-bootstrap:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        GOPROXY: https://proxy.golang.org,direct   # 国内服务器改为 https://goproxy.cn,direct
+    image: np4-bootstrap:latest
+    container_name: np4-bootstrap
+    restart: unless-stopped
+    ports:
+      - "4000:4000"            # DHT + mix relay — the ONLY public port
+      - "127.0.0.1:8080:8080"  # dashboard: localhost-only (CORS * and no auth!)
+    volumes:
+      - identity:/data         # boot.id lives here — back it up
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  identity:
+    name: np4-identity
