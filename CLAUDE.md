@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**MANDATORY:** read and follow `AGENTS.md` — it contains the protocol-change
+checklist (rebuild native libraries, test matrix, bridge ABI discipline,
+e2e verification, spec sync, commit-then-push) that applies to every change
+under `go/`. The commonest failure mode in this repo: fixing Go code and
+leaving the clients' native libraries stale, so GUI clients silently run
+the old protocol stack.
+
 ## Project Overview
 
 Np4Protocol is a Mixnet-based anonymous communication protocol with metadata protection. The Go implementation lives in the `go/` subdirectory with its own `go.mod` (module name: `Np4Protocol/go`).
