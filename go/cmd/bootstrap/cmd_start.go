@@ -25,6 +25,7 @@ var webPort int
 var webHost string
 var allowlistPath string
 var relayRate float64
+var dummyRate float64
 
 var startTime time.Time
 
@@ -45,6 +46,7 @@ var startCmd = &cobra.Command{
 			np4.WithDHTServer(),
 			np4.WithAdmission(admission.admitted),
 			np4.WithRelayRateLimit(relayRate, defaultRelayBurst),
+			np4.WithDummyRate(dummyRate),
 		)
 		if err != nil {
 			return fmt.Errorf("bootstrap node: %w", err)
@@ -212,5 +214,6 @@ func init() {
 	startCmd.Flags().StringVar(&webHost, "web-host", "127.0.0.1", "Dashboard bind address (loopback unless you accept the exposure)")
 	startCmd.Flags().StringVar(&allowlistPath, "allowlist", "", "Admission allowlist file: one peer ID per line; empty = open admission")
 	startCmd.Flags().Float64Var(&relayRate, "relay-rate", 10, "Per-peer relay ingress cells/second (0 = unlimited)")
+	startCmd.Flags().Float64Var(&dummyRate, "dummy-rate", 0.5, "Cover traffic mean cells/second (0 = disable)")
 	rootCmd.AddCommand(startCmd)
 }

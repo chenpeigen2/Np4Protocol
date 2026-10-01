@@ -88,7 +88,17 @@ const (
 	// from the DHT. Verification uses the snapshot; a brand-new contact is
 	// verifiable within one interval.
 	defaultContactRefresh = 30 * time.Second
+
+	// productionDummyRate is the cover-traffic mean wired into the
+	// production entrypoints (CLI, bridge, bootstrap). The library default
+	// stays 0 so tests and embeddings get deterministic traffic unless they
+	// opt in — the anonymity baseline measurement depends on that.
+	productionDummyRate = 0.5 // cells/s per node ≈ 1 cell per 2s
 )
+
+// ProductionDummyRate is the cover-traffic mean used by production
+// entrypoints; embedders may mirror it or pick their own via WithDummyRate.
+const ProductionDummyRate = productionDummyRate
 
 // Node is the local Np4Protocol peer. It owns a libp2p host, an identity, a
 // message bus, an entry mix engine, and — when serving as a relay — a relay
@@ -111,7 +121,8 @@ type Node struct {
 
 	contactMu   sync.RWMutex
 	contacts    map[peer.ID][]byte // verified-binding published ECDH keys, for sender verification
-	contactTick time.Duration      // 0 = manual refresh only
+	contactTick time.Duration      // negative = manual refresh only
+	dummyRate   float64            // cover-traffic mean cells/s; <=0 = off
 
 	evMu      sync.RWMutex
 	evHandler func(LinkEvent)
@@ -199,6 +210,10 @@ type config struct {
 	// contactRefresh controls the background sender-verification cache
 	// rebuild. 0 disables the loop (RefreshContacts must be called manually).
 	contactRefresh time.Duration
+
+	// dummyRate is the cover-traffic mean in cells/s (Poisson). The library
+	// default is 0 (deterministic tests); production entrypoints set 0.5.
+	dummyRate float64
 }
 
 // WithIdentity loads (or creates) the node's identity from path.
@@ -247,6 +262,14 @@ func WithContactRefreshInterval(d time.Duration) Option {
 	return func(c *config) { c.contactRefresh = d }
 }
 
+// WithDummyRate sets the cover-traffic mean in cells/s (Poisson process).
+// Zero disables dummy injection — the library default, so tests and
+// embeddings stay deterministic; production entrypoints (CLI, bridge,
+// bootstrap) enable 0.5. Dummies are protocol-identical to real packets
+// (same path selection, same wire size, TypeDummy inside the innermost
+// cell) and receivers drop them before the dedup cache.
+func WithDummyRate(rate float64) Option { return func(c *config) { c.dummyRate = rate } }
+
 // NewNode creates a Node. Without WithBootstrap, the node runs in direct-only
 // mode (no mix routing, no DHT). With WithBootstrap, it joins the DHT and
 // routes Send calls through the mix.
@@ -289,6 +312,7 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 		cfg.contactRefresh = defaultContactRefresh
 	}
 	n.contactTick = cfg.contactRefresh // negative = manual refresh only
+	n.dummyRate = cfg.dummyRate
 	if cfg.relayRate > 0 {
 		n.limiter = newRelayLimiter(cfg.relayRate, cfg.relayBurst)
 	}
@@ -327,6 +351,9 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 		// Rebuild the snapshot in the background; verification degrades to
 		// "unverified" (never to a dropped message) while the cache is cold.
 		go n.contactRefreshLoop()
+		// Cover traffic on the Poisson schedule (rate 0 = off, the library
+		// default; production entrypoints enable it).
+		go n.dummyLoop()
 
 		// A standalone DHT server (seed node) has no onion-path consumers; it
 		// only serves records. Skip the path selector so Send falls back to

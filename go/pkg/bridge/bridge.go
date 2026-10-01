@@ -37,9 +37,10 @@ import (
 type Config struct {
 	Port         int    `json:"port"`          // 0 = random
 	IdentityPath string `json:"identity_path"` // empty = ephemeral in-memory identity
-	Bootstrap    string `json:"bootstrap"`     // bootstrap node multiaddr; empty = direct-only mode
-	Hops         int    `json:"hops"`          // onion path length; 0 = protocol default (3)
-	Rendezvous   string `json:"rendezvous"`    // empty = "np4-network"
+	Bootstrap  string  `json:"bootstrap"`   // bootstrap node multiaddr; empty = direct-only mode
+	Hops       int     `json:"hops"`        // onion path length; 0 = protocol default (3)
+	Rendezvous string  `json:"rendezvous"`  // empty = "np4-network"
+	DummyRate  float64 `json:"dummy_rate"`  // cover-traffic mean cells/s; 0 = production default (0.5); negative = off
 }
 
 // Request is the JSON body for Call.
@@ -97,6 +98,15 @@ func (m *Manager) Create(configJSON []byte) (map[string]any, error) {
 			return nil, fmt.Errorf("bridge: bootstrap multiaddr: %w", err)
 		}
 		opts = append(opts, np4.WithBootstrap([]peer.AddrInfo{*ai}))
+	}
+	// Cover traffic defaults ON for embedded clients — a silent client is an
+	// activity fingerprint. Negative rate is the explicit opt-out.
+	if cfg.DummyRate < 0 {
+		opts = append(opts, np4.WithDummyRate(0))
+	} else if cfg.DummyRate > 0 {
+		opts = append(opts, np4.WithDummyRate(cfg.DummyRate))
+	} else {
+		opts = append(opts, np4.WithDummyRate(np4.ProductionDummyRate))
 	}
 
 	node, err := np4.NewNode(cfg.Port, opts...)

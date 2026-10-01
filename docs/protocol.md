@@ -16,7 +16,7 @@ Np4Protocol is a Mixnet-based anonymous communication protocol designed for meta
 **已知边界（不解决，见 [v2]）**：
 
 - 静态长期 ECDH key，无 forward secrecy（[M4] 时间桶轮换）。
-- 无 dummy traffic：流量速率本身泄露活跃度（[M3]；cell type 字节已就位）。
+- Cover traffic 只 flatten 发送侧速率，不防 GPA 时序关联（威胁模型声明的边界）。
 - 开放准入模式（无 --allowlist）下无抗 Sybil：攻击者可注册大量 relay 吸路径。
 - Replay 防线依赖内存缓存（eph_pub LRU 100k + msg_id 去重 100k）：重启清零、淘汰后窗口重开；去重保证不重复投递，残余风险为容量挤占，评估低危（2026-10-01 审查备案）。
 
@@ -121,13 +121,22 @@ v1 仅使用 `TypeAsync`（mix 送达）与 direct JSON 消息（`--insecure`）
 | 入口 batch | 10 条 / 500 ms | 发送端 |
 | relay batch | 10 条 / 200 ms | 每个中间 relay |
 | relay replay 缓存 | 100k 条 LRU | ~3.2 MB |
+| cover traffic | Poisson 0.5 cell/s/节点 | 生产入口默认；`--dummy-rate` 可调，0=关 |
 | flush 并发上限 | 64 | 反压而非无限 goroutine |
 
 延迟预算：最坏 ≈ 500ms + 3×200ms ≈ 1.1s。
 
+## Cover Traffic **[must]**
+
+无 cover 时，发送速率本身即活跃度指纹。所有启用 DHT 的节点以 **Poisson 过程**注入 dummy cell（均值 `--dummy-rate`，生产默认 0.5 cell/s ≈ 每 2 秒 1 条；0=关闭，库默认关闭以保证测量确定性）：
+
+- **不可区分性**：真实路径选择 + 真实洋葱结构 + 恒定 wire 尺寸；与真实包唯一的差异是最内层 cell 的 `type=0x00`，任何 relay 不可见。receiver 在去重缓存**之前**静默丢弃，不产生事件。
+- **目的地选择**：随机联系人（排除自身与 bootstrap——终止于 bootstrap 的包会被它百分百识别为 dummy，见威胁模型）。
+- **让位语义**：mix 队列满时 dummy 被拒、真实流量优先；注入路径上任何失败静默跳过，绝不产生用户可见错误。
+- **入口点默认**：np4cli / bridge（嵌入客户端）/ bootstrap 均默认 0.5；bridge 传负值显式关闭。
+
 ## [v2] Roadmap
 
-- [M3] Dummy traffic：全节点注入 Poisson cover cells（默认 1 cell/2s，`--dummy-rate`），cell type 字节已就位；届时重新评估 cell 尺寸。
 - [M4] Forward secrecy：时间桶子密钥（24h 轮换 / 7d 保留，复用 PublishKeys 通道）。
 - 端到端 ACK（回程 onion 路径）。
 - Key rotation / forward secrecy（与 DHT record TTL 耦合）。
