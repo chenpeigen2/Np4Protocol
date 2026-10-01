@@ -176,8 +176,15 @@ class ChatPage(QWidget):
             # Keep a manually typed or previously selected destination.
             self.dest.setCurrentText(current)
 
-    def add_incoming(self, sender: str, content: str) -> None:
-        self.messages.addItem(QListWidgetItem(f"{content}\n{_stamp()} · {sender}"))
+    def add_incoming(self, sender: str, content: str, verified: bool) -> None:
+        # Sender attribution comes from the pairwise auth tag: a verified
+        # message shows which contact sent it, an unverified one stays
+        # anonymous and is badged so the reader treats it with suspicion.
+        if verified:
+            origin = f"✓ 已验证联系人 {sender[:12]}…"
+        else:
+            origin = "⚠ 未验证来源（匿名）"
+        self.messages.addItem(QListWidgetItem(f"{content}\n{_stamp()} · {origin}"))
         self.messages.scrollToBottom()
 
     def add_outgoing(self, text: str) -> None:
@@ -233,10 +240,10 @@ class MainWindow(QMainWindow):
         if self._chat is not None:
             self._chat.set_state(state)
 
-    def _on_message(self, sender: str, content: str) -> None:
-        print(f"[np4] message received from {sender}: {content}", flush=True)
+    def _on_message(self, sender: str, content: str, verified: bool) -> None:
+        print(f"[np4] message received from {sender} (verified={verified}): {content}", flush=True)
         if self._chat is not None:
-            self._chat.add_incoming(sender, content)
+            self._chat.add_incoming(sender, content, verified)
 
     def _on_peers(self, peers: list) -> None:
         if self._chat is not None:

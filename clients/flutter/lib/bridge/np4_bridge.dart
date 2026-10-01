@@ -38,17 +38,26 @@ class Np4Config {
       };
 }
 
-/// A message delivered to us. `sender` is always "anonymous" on the mix path —
-/// that is the point.
+/// A message delivered to us.
+///
+/// `sender` is "anonymous" unless the pairwise auth tag attributed the message
+/// to a known contact — in which case it is that contact's peer ID and
+/// `verified` is true. Unverified messages are badged in the UI, not dropped.
 class Np4Incoming {
-  Np4Incoming({required this.sender, required this.content, this.timestamp});
+  Np4Incoming({
+    required this.sender,
+    required this.content,
+    this.verified = false,
+    this.timestamp,
+  });
 
   final String sender;
   final String content;
+  final bool verified;
   final DateTime? timestamp;
 
   @override
-  String toString() => 'Np4Incoming($sender: $content)';
+  String toString() => 'Np4Incoming($sender: $content, verified=$verified)';
 }
 
 /// Result of creating a node.

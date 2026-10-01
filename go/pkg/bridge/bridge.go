@@ -109,6 +109,7 @@ func (m *Manager) Create(configJSON []byte) (map[string]any, error) {
 		h.events.push(map[string]any{
 			"type":        "message",
 			"sender":      msg.SenderID,
+			"verified":    msg.Verified,
 			"content_b64": base64.StdEncoding.EncodeToString(msg.Content),
 		})
 	})

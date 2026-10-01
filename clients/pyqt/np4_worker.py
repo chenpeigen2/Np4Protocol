@@ -22,7 +22,7 @@ PEERS_REFRESH_S = 30
 class BridgeWorker(QThread):
     node_ready = pyqtSignal(dict)  # {handle, peer_id, addrs}
     state_changed = pyqtSignal(str)
-    message_received = pyqtSignal(str, str)  # sender, content
+    message_received = pyqtSignal(str, str, bool)  # sender, content, verified
     # dest, text, error ('' = success). Carrying the exact text through the
     # worker lets the UI echo what was SENT, not whatever happens to be in
     # the input box by the time the ack comes back.
@@ -79,8 +79,8 @@ class BridgeWorker(QThread):
                     last_peers = time.monotonic()
                 events, _dropped = bridge.poll(handle)
                 for ev in events:
-                    sender, content = decode_event(ev)
-                    self.message_received.emit(sender, content)
+                    sender, content, verified = decode_event(ev)
+                    self.message_received.emit(sender, content, verified)
                 if time.monotonic() - last_peers > PEERS_REFRESH_S:
                     self._refresh_peers(bridge, handle)
                     last_peers = time.monotonic()

@@ -51,7 +51,13 @@ var chatCmd = &cobra.Command{
 		fmt.Println()
 
 		n.OnMessage(func(msg *message.Message) {
-			fmt.Printf("\n[%s] %s: %s\n> ", time.Now().Format("15:04:05"), msg.SenderID, string(msg.Content))
+			from := msg.SenderID
+			if msg.Verified {
+				from = "✓ " + from
+			} else {
+				from = "⚠ " + from + " (unverified)"
+			}
+			fmt.Printf("\n[%s] %s: %s\n> ", time.Now().Format("15:04:05"), from, string(msg.Content))
 		})
 
 		scanner := bufio.NewScanner(os.Stdin)

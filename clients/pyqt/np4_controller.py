@@ -46,7 +46,7 @@ def validate_bootstrap(addr: str) -> str | None:
 class ChatController(QObject):
     node_ready = pyqtSignal(dict)  # {handle, peer_id, addrs}
     state_changed = pyqtSignal(str)
-    message_received = pyqtSignal(str, str)  # sender, content
+    message_received = pyqtSignal(str, str, bool)  # sender, content, verified
     peers_updated = pyqtSignal(list)  # [(peer_id, addrs)]
     send_completed = pyqtSignal(str, str)  # text, error ('' = success)
     # The destination is not in the current online list: delivery is

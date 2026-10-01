@@ -49,6 +49,7 @@ class FfiTransport implements Np4Transport {
         // The bridge JSON carries content as base64 (go/pkg/bridge).
         content:
             utf8.decode(base64Decode(ev['content_b64'] as String? ?? '')),
+        verified: (ev['verified'] as bool?) ?? false,
       ));
       return;
     }

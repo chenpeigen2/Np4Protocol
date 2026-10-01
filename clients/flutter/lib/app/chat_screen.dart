@@ -6,12 +6,32 @@ import 'package:flutter/services.dart';
 import '../bridge/np4_bridge.dart';
 
 class _ChatMessage {
-  _ChatMessage({required this.sender, required this.text, required this.time, required this.mine});
+  _ChatMessage({
+    required this.sender,
+    required this.text,
+    required this.time,
+    required this.mine,
+    this.verified = false,
+  });
 
   final String sender;
   final String text;
   final DateTime time;
   final bool mine;
+  // Incoming only: the pairwise auth tag matched a known contact. Our own
+  // echoed messages never carry it.
+  final bool verified;
+
+  /// Attribution line shown above the bubble text: own messages, verified
+  /// contacts (short peer ID), or an explicit unverified warning.
+  String get label {
+    if (mine) return '我';
+    if (verified) {
+      final short = sender.length > 12 ? '${sender.substring(0, 12)}…' : sender;
+      return '✓ 已验证 $short';
+    }
+    return '⚠ 未验证来源';
+  }
 }
 
 /// Mix-routed chat. The peer appears as "anonymous"; our own messages are
@@ -90,13 +110,15 @@ class _ChatScreenState extends State<ChatScreen> {
   void _onIncoming(Np4Incoming msg) {
     // Debug builds log delivery so attached tooling (flutter run) can verify
     // end-to-end flow without touching the UI.
-    debugPrint('[np4] message received from ${msg.sender}: ${msg.content}');
+    debugPrint(
+        '[np4] message received from ${msg.sender} (verified=${msg.verified}): ${msg.content}');
     setState(() {
       _messages.add(_ChatMessage(
         sender: msg.sender,
         text: msg.content,
         time: DateTime.now(),
         mine: false,
+        verified: msg.verified,
       ));
     });
     _scrollToBottom();
@@ -295,7 +317,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(m.mine ? '我' : m.sender,
+                              Text(m.label,
                                   style: Theme.of(context).textTheme.labelSmall),
                               Text(m.text),
                               Align(

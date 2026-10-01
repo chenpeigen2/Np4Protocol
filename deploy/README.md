@@ -18,7 +18,9 @@ sudo ./deploy.sh            # 公网 IP 自动探测；也可显式指定：sudo
 |---|---|
 | 镜像 | 多阶段构建：golang:1.26-alpine 编译静态二进制（CGO_ENABLED=0）→ alpine:3.20 运行 |
 | 身份持久化 | `/data/boot.id` 存在 `np4-identity` 卷里。**丢了它 = Peer ID 变了 = 所有客户端地址作废**，务必备份（脚本输出里有备份命令） |
-| 端口 | 仅 `4000/tcp` 公开（DHT + relay）；仪表盘 `8080` 只绑 `127.0.0.1`——它无鉴权且 CORS 全开，绝不暴露公网，用 SSH 隧道访问 |
+| 端口 | 仅 `4000/tcp` 公开（DHT + relay）；仪表盘 `8080` 只绑 `127.0.0.1`（`--web-host` 可改）——它无鉴权且 CORS 全开，绝不暴露公网，用 SSH 隧道访问 |
+| 准入 | `--allowlist <file>`：每行一个 peer ID（# 注释），热加载（5s 轮询）。名单外节点在连接层即被拒（进不了 DHT）；**不配置 = 开放准入**。bootstrap 自身 ID 永远豁免 |
+| 限速 | relay 入口 per-peer 令牌桶：默认 10 cell/s、burst 50（`--relay-rate` 可调，0=不限），防单客户端灌满 relay 队列 |
 | 健康检查 | `wget /api/status`，compose 依赖它决定重启；deploy.sh 等到 healthy 才打印地址 |
 | 重启策略 | `unless-stopped` + docker 开机自启；日志 10MB×3 轮转 |
 | 防火墙 | ufw active 时只放行 4000/tcp |

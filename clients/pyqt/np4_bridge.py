@@ -95,8 +95,12 @@ class Bridge:
         return res.get("events", []), res.get("dropped", 0)
 
 
-def decode_event(ev: dict) -> tuple[str, str]:
+def decode_event(ev: dict) -> tuple[str, str, bool]:
+    """Returns (sender, content, verified). verified=True means the message
+    carried a valid sender-auth tag attributable to a known contact; the
+    sender field is then that contact's peer ID, else 'anonymous'."""
     return (
         ev.get("sender", "anonymous"),
         base64.b64decode(ev.get("content_b64", "")).decode("utf-8", "replace"),
+        bool(ev.get("verified", False)),
     )

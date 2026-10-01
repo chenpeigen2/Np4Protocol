@@ -22,12 +22,14 @@ import (
 var webFiles embed.FS
 
 var webPort int
+var webHost string
+var allowlistPath string
+var relayRate float64
 
 var startTime time.Time
 
 var startCmd = &cobra.Command{
-	Use:   "start",
-	Short: "Start the bootstrap node",
+	Use: "start",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
@@ -37,14 +39,20 @@ var startCmd = &cobra.Command{
 		// connection to it, so the last onion hop to a NAT'd client rides an
 		// already-established connection instead of an impossible inbound
 		// dial. Single-relay deployments pair with client --hops 1.
+		admission := newAllowlistFile(allowlistPath)
 		node, err := np4.NewNode(port,
 			np4.WithIdentity(identityPath),
 			np4.WithDHTServer(),
+			np4.WithAdmission(admission.admitted),
+			np4.WithRelayRateLimit(relayRate, defaultRelayBurst),
 		)
 		if err != nil {
 			return fmt.Errorf("bootstrap node: %w", err)
 		}
 		defer node.Close()
+		// Before anything can publish (ServeRelay starts below), the
+		// operator's own ID is exempted from the list.
+		admission.self = node.ID()
 
 		startTime = time.Now()
 
@@ -54,6 +62,13 @@ var startCmd = &cobra.Command{
 		for _, addr := range node.Addrs() {
 			fmt.Printf("  %s\n", addr)
 		}
+		if allowlistPath == "" {
+			fmt.Println("Admission: OPEN (no --allowlist configured; anyone may join)")
+		} else if admission.enabled() {
+			fmt.Printf("Admission: ALLOWLIST (%s, %d peers, hot reload)\n", allowlistPath, admission.size())
+		} else {
+			fmt.Printf("Admission: ALLOWLIST pending valid file %s\n", allowlistPath)
+		}
 		fmt.Println()
 		fmt.Println("On a public server the printed listen IP is the internal one;")
 		fmt.Println("hand clients the multiaddr with the PUBLIC IP, e.g.:")
@@ -62,8 +77,11 @@ var startCmd = &cobra.Command{
 
 		if webPort > 0 {
 			go startGinServer(node)
-			fmt.Printf("Dashboard: http://localhost:%d\n", webPort)
+			fmt.Printf("Dashboard: http://%s:%d\n", webHost, webPort)
 		}
+
+		// Relay admission list: polled for edits while running.
+		admission.watchReloads(ctx, allowlistReloadInterval)
 
 		// Advertise as mix relay. Publishing the key needs a non-empty DHT
 		// routing table (records are stored on peers), and on a fresh
@@ -178,10 +196,21 @@ func startGinServer(node *np4.Node) {
 		c.JSON(http.StatusOK, out)
 	})
 
-	r.Run(fmt.Sprintf(":%d", webPort))
+	// Dashboard binds loopback by default: it is unauthenticated with CORS
+	// wide open, and leaks the directory (peer IDs, keys, addrs) to anyone
+	// who can reach it. --web-host 0.0.0.0 opts back into LAN exposure.
+	r.Run(fmt.Sprintf("%s:%d", webHost, webPort))
 }
+
+const (
+	defaultRelayBurst       = 50
+	allowlistReloadInterval = 5 * time.Second
+)
 
 func init() {
 	startCmd.Flags().IntVar(&webPort, "web", 8080, "Web dashboard port (0 to disable)")
+	startCmd.Flags().StringVar(&webHost, "web-host", "127.0.0.1", "Dashboard bind address (loopback unless you accept the exposure)")
+	startCmd.Flags().StringVar(&allowlistPath, "allowlist", "", "Admission allowlist file: one peer ID per line; empty = open admission")
+	startCmd.Flags().Float64Var(&relayRate, "relay-rate", 10, "Per-peer relay ingress cells/second (0 = unlimited)")
 	rootCmd.AddCommand(startCmd)
 }

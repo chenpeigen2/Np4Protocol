@@ -64,6 +64,7 @@ class FakeTransport implements Np4Transport {
             sender: e['sender'] as String,
             content:
                 utf8.decode(base64Decode(e['content_b64'] as String)),
+            verified: (e['verified'] as bool?) ?? false,
           ));
 
   @override
