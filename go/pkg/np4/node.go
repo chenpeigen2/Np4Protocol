@@ -721,8 +721,9 @@ const RendezvousRelay = "np4-relay"
 // ListPeers returns the addressable peers discovered via the np4-peers
 // rendezvous, excluding self. A peer is only listed when its published key
 // verifies against the DHT's peer-ID binding — the same check Send relies on
-// — so every entry is reachable through the mix. Addresses ride along for
-// debugging and direct-mode callers.
+// — so every entry is reachable through the mix. The verified X25519 onion
+// key and addresses ride along for callers that need them (address book,
+// direct-mode dialing).
 func (n *Node) ListPeers(ctx context.Context) ([]pathsel.PeerInfo, error) {
 	if n.dht == nil {
 		return nil, errors.New("DHT not initialized")
@@ -736,14 +737,15 @@ func (n *Node) ListPeers(ctx context.Context) ([]pathsel.PeerInfo, error) {
 		if pi.ID == n.ID() {
 			continue
 		}
-		if _, err := pathsel.GetKey(ctx, n.dht, pi.ID); err != nil {
+		ecdhPub, err := pathsel.GetKey(ctx, n.dht, pi.ID)
+		if err != nil {
 			continue // no key yet, stale record, or invalid binding
 		}
 		addrs := make([]string, 0, len(pi.Addrs))
 		for _, a := range pi.Addrs {
 			addrs = append(addrs, a.String())
 		}
-		out = append(out, pathsel.PeerInfo{ID: pi.ID, Addrs: addrs})
+		out = append(out, pathsel.PeerInfo{ID: pi.ID, ECDHPub: ecdhPub, Addrs: addrs})
 	}
 	return out, nil
 }

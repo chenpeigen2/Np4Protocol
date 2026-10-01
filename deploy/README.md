@@ -32,6 +32,15 @@ git pull && sudo docker compose up -d --build # 升级代码
 docker run --rm -v np4-identity:/data -v $PWD:/backup alpine cp /data/boot.id /backup/   # 备份身份
 ```
 
+## 仪表盘接口（SSH 隧道访问 `http://localhost:8080`）
+
+| 接口 | 内容 |
+|---|---|
+| `/api/status` | 节点状态：peer_id、监听地址、uptime、DHT 路由表大小 |
+| `/api/directory` | **通讯录**：每个 mix 可达节点一条记录 —— `peer_id` / `addrs` / `ecdh_pub`（X25519 洋葱公钥）/ `connected`（在线）/ `is_relay`（能否当中继）。面板每 5 秒刷新，每条目可一键复制 JSON（即客户端添加联系人所需的全部信息） |
+| `/api/peers` | 原始 libp2p 连接视图（含尚未发布 key、不可达的节点） |
+| `/api/relays` | 当前 advertise 为 relay 的节点及其 X25519 公钥 |
+
 ## 信任边界（部署前必读）
 
 单 relay 部署下，这台服务器能看到**全网流量的进出时序**并关联收发双方——匿名性完全取决于对服务器运营者（你）的信任，等价于传统代理模型（见 `docs/protocol.md` 威胁模型）。要真正的 mix 匿名性，需要多个互不信任的 relay：在别的机器上再跑几个 `np4cli relay`，客户端把 `--hops` 提到 relay 总数。协议侧已支持多个 bootstrap 地址（`WithBootstrap` 接受列表），后续做多 bootstrap 高可用不需要改客户端。

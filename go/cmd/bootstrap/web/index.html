@@ -80,6 +80,46 @@
             margin-top: 0.5rem;
         }
         .peer-card .peer-id { font-size: 0.8rem; color: #aaa; }
+        .peer-head {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.4rem;
+        }
+        .peer-head .peer-id { flex: 1; word-break: break-all; }
+        .conn-dot {
+            display: inline-block;
+            width: 8px; height: 8px; border-radius: 50%;
+            flex: none;
+        }
+        .conn-dot.on { background: #00ff88; }
+        .conn-dot.off { background: #555; }
+        .badge {
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 0.15rem 0.45rem;
+            border-radius: 3px;
+            flex: none;
+        }
+        .badge.relay { background: #003322; color: #00ff88; border: 1px solid #00553a; }
+        .fingerprint {
+            font-family: monospace;
+            font-size: 0.7rem;
+            color: #666;
+            margin-bottom: 0.3rem;
+        }
+        .copy-btn {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            color: #888;
+            font-size: 0.65rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 3px;
+            cursor: pointer;
+            flex: none;
+        }
+        .copy-btn:hover { color: #00ff88; border-color: #00553a; }
         .empty { color: #444; font-style: italic; }
         .refresh-btn {
             background: #1a1a1a;
@@ -150,9 +190,9 @@
         </div>
 
         <div class="card">
-            <h2>Peers (<span id="peer-count">0</span>)</h2>
+            <h2>Directory 通讯录 (<span id="peer-count">0</span>)</h2>
             <div id="peers">
-                <div class="empty">No peers connected</div>
+                <div class="empty">No addressable nodes</div>
             </div>
         </div>
     </div>
@@ -176,23 +216,32 @@
             }
         }
 
+        let lastDir = [];
+
         async function fetchPeers() {
             try {
-                const res = await fetch(`${API}/api/peers`);
-                const peers = await res.json();
-                document.getElementById('peer-count').textContent = peers.length;
+                const res = await fetch(`${API}/api/directory`);
+                if (!res.ok) throw new Error(res.status);
+                lastDir = await res.json();
+                document.getElementById('peer-count').textContent = lastDir.length;
 
                 const container = document.getElementById('peers');
-                if (peers.length === 0) {
-                    container.innerHTML = '<div class="empty">No peers connected</div>';
+                if (lastDir.length === 0) {
+                    container.innerHTML = '<div class="empty">No addressable nodes</div>';
                     return;
                 }
 
-                container.innerHTML = peers.map(p => `
+                container.innerHTML = lastDir.map(p => `
                     <div class="peer-card">
-                        <div class="peer-id">${p.id}</div>
+                        <div class="peer-head">
+                            <span class="conn-dot ${p.connected ? 'on' : 'off'}" title="${p.connected ? 'connected' : 'offline'}"></span>
+                            <span class="peer-id">${p.peer_id}</span>
+                            ${p.is_relay ? '<span class="badge relay">relay</span>' : ''}
+                            <button class="copy-btn" data-id="${p.peer_id}">Copy JSON</button>
+                        </div>
+                        <div class="fingerprint">onion key: ${p.ecdh_pub.slice(0, 16)}…</div>
                         <ul class="addr-list">
-                            ${p.addresses.map(a => `<li>${a}</li>`).join('')}
+                            ${(p.addrs || []).map(a => `<li>${a}</li>`).join('') || '<li class="empty">no addresses yet</li>'}
                         </ul>
                     </div>
                 `).join('');
@@ -200,6 +249,15 @@
                 document.getElementById('peers').innerHTML = '<div class="empty">Failed to load</div>';
             }
         }
+
+        // Copy the full address-book entry: exactly what a client needs to
+        // add this node as a contact (peer_id, addrs, ecdh_pub, flags).
+        document.addEventListener('click', (ev) => {
+            const btn = ev.target.closest('.copy-btn');
+            if (!btn) return;
+            const entry = lastDir.find(p => p.peer_id === btn.dataset.id);
+            if (entry) navigator.clipboard.writeText(JSON.stringify(entry, null, 2));
+        });
 
         function refresh() {
             fetchStatus();

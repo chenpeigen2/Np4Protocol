@@ -145,6 +145,19 @@ func startGinServer(node *np4.Node) {
 		c.JSON(http.StatusOK, peerList)
 	})
 
+	// The address book: every mix-reachable node with the fields a client
+	// contact entry needs — peer_id, addrs, ecdh_pub, connected, is_relay.
+	r.GET("/api/directory", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+		defer cancel()
+		dir, err := node.Directory(ctx)
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, dir)
+	})
+
 	r.GET("/api/relays", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
