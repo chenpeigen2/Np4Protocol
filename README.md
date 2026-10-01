@@ -67,13 +67,24 @@ go build -o bin/np4cli    ./cmd/np4cli/
 #    可选准入：--allowlist peers.txt（每行一个 peer ID，热加载）
 #    可选限速：--relay-rate 10（per-peer 令牌桶 cell/s，0=不限）
 
-# 3. 两个终端各起一个 CLI 客户端
-./bin/np4cli connect /ip4/127.0.0.1/tcp/4000/p2p/<bootstrap-peer-id> --hops 1
-./bin/np4cli chat --self <peer-id-A>
-./bin/np4cli send <peer-id-B> "hello over the mix"
+# 3. 两个终端各起一个客户端（chat 是交互式 REPL；启动时打印自己的 Peer ID，
+#    并自动向 DHT 发布 key 使自己可寻址）
+BOOT=/ip4/127.0.0.1/tcp/4000/p2p/<bootstrap-peer-id>
+./bin/np4cli --port 4004 --bootstrap $BOOT --hops 1 --identity ./a.id chat
+./bin/np4cli --port 4005 --bootstrap $BOOT --hops 1 --identity ./b.id chat
+
+# 4. 在 chat 内互发（--hops 1：唯一的 relay 就是 bootstrap）
+> send <peer-id-B> "hello over the mix"
 ```
 
-端到端验证标准：接收端日志出现 `[np4] message received`（客户端发送失败会写 `[np4] send ... failed`，排查先看日志）。
+端到端验证：接收端 chat 内打印 `[时间] <sender>: <消息>`（GUI 客户端则看日志 `[np4] message received`；发送失败会写 `[np4] send ... failed`，排查先看日志）。
+
+**关键语义**：
+
+- **离线即丢**：对方不在线或未完成 key 发布 → 消息丢失（无 presence、无离线队列，[v2] 规划）。
+- **无送达保证**：发送返回成功仅表示「已进入 mix」（交给第一跳 relay），端到端 ACK 是 [v2] 特性。
+- **冷启动延迟**：新节点加入后 DHT 路由表需数秒预热；路径选择自动重试（最长 25s）。
+- 多 relay 部署（匿名性更好）：1 bootstrap + N 个 `np4cli relay`（N ≥ `--hops`，默认 3），详见 [go/cmd/np4cli/README.md](go/cmd/np4cli/README.md)。
 
 更多：`np4cli` 各子命令见 [go/cmd/np4cli/README.md](go/cmd/np4cli/README.md)；bootstrap 参数见 [go/cmd/bootstrap/README.md](go/cmd/bootstrap/README.md)；容器化部署见 [deploy/README.md](deploy/README.md)。
 
