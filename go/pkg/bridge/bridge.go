@@ -35,12 +35,12 @@ import (
 
 // Config is the JSON body for Create.
 type Config struct {
-	Port         int    `json:"port"`          // 0 = random
-	IdentityPath string `json:"identity_path"` // empty = ephemeral in-memory identity
-	Bootstrap  string  `json:"bootstrap"`   // bootstrap node multiaddr; empty = direct-only mode
-	Hops       int     `json:"hops"`        // onion path length; 0 = protocol default (3)
-	Rendezvous string  `json:"rendezvous"`  // empty = "np4-network"
-	DummyRate  float64 `json:"dummy_rate"`  // cover-traffic mean cells/s; 0 = production default (0.5); negative = off
+	Port         int     `json:"port"`          // 0 = random
+	IdentityPath string  `json:"identity_path"` // empty = ephemeral in-memory identity
+	Bootstrap    string  `json:"bootstrap"`     // bootstrap node multiaddr; empty = direct-only mode
+	Hops         int     `json:"hops"`          // onion path length; 0 = protocol default (3)
+	Rendezvous   string  `json:"rendezvous"`    // empty = "np4-network"
+	DummyRate    float64 `json:"dummy_rate"`    // cover-traffic mean cells/s; 0 = production default (0.5); negative = off
 }
 
 // Request is the JSON body for Call.
@@ -108,6 +108,9 @@ func (m *Manager) Create(configJSON []byte) (map[string]any, error) {
 	} else {
 		opts = append(opts, np4.WithDummyRate(np4.ProductionDummyRate))
 	}
+	// Same for the onion ingress budget: embedded clients face untrusted
+	// peers exactly like CLI nodes do.
+	opts = append(opts, np4.WithRelayRateLimit(np4.ProductionIngressRate, np4.ProductionIngressBurst))
 
 	node, err := np4.NewNode(cfg.Port, opts...)
 	if err != nil {

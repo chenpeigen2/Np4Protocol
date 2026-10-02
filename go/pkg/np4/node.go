@@ -110,6 +110,16 @@ const (
 // entrypoints; embedders may mirror it or pick their own via WithDummyRate.
 const ProductionDummyRate = productionDummyRate
 
+// ProductionIngressRate/Burst is the per-peer onion ingress budget that
+// production entrypoints (CLI, bridge) apply when not explicitly configured:
+// far above legitimate flow (a relay flushes at most 50 cells/s per peer),
+// tight enough that a flood is throttled. Every node faces untrusted peers
+// in open-admission mode — not just relays.
+const (
+	ProductionIngressRate  = 100.0
+	ProductionIngressBurst = 200
+)
+
 // Node is the local Np4Protocol peer. It owns a libp2p host, an identity, a
 // message bus, an entry mix engine, and — when serving as a relay — a relay
 // mix engine, plus replay/dedup caches.
@@ -270,7 +280,9 @@ func WithAdmission(allow func(peer.ID) bool) Option { return func(c *config) { c
 
 // WithRelayRateLimit enables the per-peer ingress token bucket on the onion
 // protocol: rate cells per second, burst bucket capacity. rate <= 0 disables
-// limiting. Intended for relay nodes (the bootstrap) facing untrusted clients.
+// limiting. Production entrypoints default it to 100/s with burst 200; the
+// bootstrap's stricter --relay-rate default (10/s) reflects its dedicated
+// relay role facing all clients at once.
 func WithRelayRateLimit(rate float64, burst int) Option {
 	return func(c *config) { c.relayRate, c.relayBurst = rate, burst }
 }

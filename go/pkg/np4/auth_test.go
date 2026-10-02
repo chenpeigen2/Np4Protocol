@@ -3,6 +3,7 @@ package np4
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -138,12 +139,18 @@ func TestUnCachedSenderArrivesUnverified(t *testing.T) {
 // exempt — it must serve.
 func TestAllowlistBlocksPublication(t *testing.T) {
 	dir := t.TempDir()
+	// The admission closure runs on libp2p handler goroutines while this
+	// test mutates the set — guard exactly the way production's
+	// allowlistFile does (atomic swap), or the race detector rightly fires.
+	var admMu sync.RWMutex
 	admitted := map[peer.ID]struct{}{}
 	boot, err := NewNode(0,
 		WithIdentity(filepath.Join(dir, "boot")),
 		WithDHTServer(),
 		WithContactRefreshInterval(-1),
 		WithAdmission(func(id peer.ID) bool {
+			admMu.RLock()
+			defer admMu.RUnlock()
 			_, ok := admitted[id]
 			return ok
 		}),
@@ -152,7 +159,9 @@ func TestAllowlistBlocksPublication(t *testing.T) {
 		t.Fatalf("bootstrap: %v", err)
 	}
 	defer boot.Close()
+	admMu.Lock()
 	admitted[boot.ID()] = struct{}{} // the bootstrap itself must be able to serve
+	admMu.Unlock()
 	bootAddr := peer.AddrInfo{ID: boot.ID(), Addrs: boot.Host().Addrs()}
 
 	recv, err := NewNode(0,
@@ -164,7 +173,9 @@ func TestAllowlistBlocksPublication(t *testing.T) {
 		t.Fatalf("recv: %v", err)
 	}
 	defer recv.Close()
+	admMu.Lock()
 	admitted[recv.ID()] = struct{}{}
+	admMu.Unlock()
 
 	stranger, err := NewNode(0,
 		WithIdentity(filepath.Join(dir, "stranger")),

@@ -19,6 +19,7 @@ var (
 	hops         int
 	identityPath string
 	dummyRate    float64
+	ingressRate  float64
 )
 
 var rootCmd = &cobra.Command{
@@ -55,6 +56,7 @@ func init() {
 	rootCmd.PersistentFlags().IntVar(&hops, "hops", 3, "Number of mix hops")
 	rootCmd.PersistentFlags().StringVar(&identityPath, "identity", defaultID, "Persistent identity file")
 	rootCmd.PersistentFlags().Float64Var(&dummyRate, "dummy-rate", 0.5, "Cover traffic mean cells/second (0 = disable)")
+	rootCmd.PersistentFlags().Float64Var(&ingressRate, "ingress-rate", np4.ProductionIngressRate, "Per-peer onion ingress cells/second (0 = unlimited)")
 }
 
 func initNode() (*np4.Node, error) {
@@ -63,6 +65,9 @@ func initNode() (*np4.Node, error) {
 		np4.WithRendezvous(rendezvous),
 		np4.WithHops(hops),
 		np4.WithDummyRate(dummyRate),
+	}
+	if ingressRate > 0 {
+		opts = append(opts, np4.WithRelayRateLimit(ingressRate, np4.ProductionIngressBurst))
 	}
 	if bootstrap != "" {
 		maddr, err := multiaddr.NewMultiaddr(bootstrap)
