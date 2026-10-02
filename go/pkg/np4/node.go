@@ -990,6 +990,13 @@ func (n *Node) ListPeers(ctx context.Context) ([]pathsel.PeerInfo, error) {
 		// network never has this many simultaneous contacts.
 		examined++
 		if examined > maxDiscoveryLookups {
+			// Keep draining in the background until the query closes the
+			// channel — dropping the producer mid-send would leak its
+			// goroutine until the node-level context expires.
+			go func() {
+				for range peerChan {
+				}
+			}()
 			break
 		}
 		if pi.ID == n.ID() {

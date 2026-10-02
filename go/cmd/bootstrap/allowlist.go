@@ -21,15 +21,26 @@ import (
 // The operator's own bootstrap peer ID is always admitted regardless of the
 // file: the bootstrap must publish its own relay key to function.
 type allowlistFile struct {
-	path    string
-	current atomic.Pointer[map[peer.ID]struct{}]
-	self    peer.ID
+	path       string
+	current    atomic.Pointer[map[peer.ID]struct{}]
+	self       peer.ID
+	loadFailed bool // initial load failed: fail-closed until the file is valid
 }
 
 func newAllowlistFile(path string) *allowlistFile {
 	a := &allowlistFile{path: path}
+	if path == "" {
+		return a // no --allowlist: open admission (development default)
+	}
 	if m, err := loadAllowlist(path); err != nil {
-		fmt.Printf("[bootstrap] allowlist load failed (%v); admission starts DISABLED until the file is valid\n", err)
+		// Fail CLOSED. The operator asked for restricted admission; a
+		// corrupt or unreadable list must never silently open the network.
+		// Nothing is admitted except the bootstrap itself until the file
+		// becomes valid (the hot-reload loop picks it up).
+		fmt.Printf("[bootstrap] allowlist load FAILED (%v): FAIL-CLOSED — admitting nobody except the bootstrap until the file is valid\n", err)
+		a.loadFailed = true
+		empty := map[peer.ID]struct{}{}
+		a.current.Store(&empty)
 	} else {
 		a.current.Store(&m)
 	}
@@ -55,10 +66,10 @@ func (a *allowlistFile) admitted(id peer.ID) bool {
 	return ok
 }
 
-// enabled reports whether a list is actually in force (for startup logging).
+// enabled reports whether restricted admission is in force: any configured
+// --allowlist path (even an initially invalid one, which fails closed).
 func (a *allowlistFile) enabled() bool {
-	m := a.current.Load()
-	return m != nil
+	return a != nil && a.path != ""
 }
 
 func (a *allowlistFile) size() int {

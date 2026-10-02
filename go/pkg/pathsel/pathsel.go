@@ -148,6 +148,13 @@ examined:
 	for pi := range peerChan {
 		candidates = append(candidates, pi)
 		if len(candidates) >= maxRelayLookups {
+			// Keep draining in the background until the query closes the
+			// channel — dropping the producer mid-send would leak its
+			// goroutine for as long as the caller's context lives.
+			go func() {
+				for range peerChan {
+				}
+			}()
 			break examined
 		}
 	}

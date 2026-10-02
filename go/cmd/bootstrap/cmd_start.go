@@ -66,10 +66,10 @@ var startCmd = &cobra.Command{
 		}
 		if allowlistPath == "" {
 			fmt.Println("Admission: OPEN (no --allowlist configured; anyone may join)")
-		} else if admission.enabled() {
-			fmt.Printf("Admission: ALLOWLIST (%s, %d peers, hot reload)\n", allowlistPath, admission.size())
+		} else if admission.loadFailed {
+			fmt.Printf("Admission: ALLOWLIST %s FAILED TO LOAD — FAIL-CLOSED (only the bootstrap works; fix the file to admit peers)\n", allowlistPath)
 		} else {
-			fmt.Printf("Admission: ALLOWLIST pending valid file %s\n", allowlistPath)
+			fmt.Printf("Admission: ALLOWLIST (%s, %d peers, hot reload)\n", allowlistPath, admission.size())
 		}
 		fmt.Println()
 		fmt.Println("On a public server the printed listen IP is the internal one;")
