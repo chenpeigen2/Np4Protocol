@@ -1,7 +1,10 @@
 package p2p
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
+	"io"
 	"testing"
 	"time"
 
@@ -97,5 +100,69 @@ func TestStreamRequestResponse(t *testing.T) {
 	}
 	if string(resp) != "echo: ping" {
 		t.Errorf("expected 'echo: ping', got '%s'", string(resp))
+	}
+}
+
+// fakeStream replays a scripted byte sequence to ReadMsgCap.
+type fakeStream struct {
+	network.Stream
+	data []byte
+	off  int
+}
+
+func (f *fakeStream) Read(p []byte) (int, error) {
+	if f.off >= len(f.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, f.data[f.off:])
+	f.off += n
+	return n, nil
+}
+
+func prefixedFrame(t *testing.T, length uint32, body []byte) []byte {
+	t.Helper()
+	out := make([]byte, 4, 4+len(body)+int(length))
+	binary.BigEndian.PutUint32(out[:4], length)
+	return append(out, body...)
+}
+
+// TestReadMsgCapRejectsOverlongPrefix: a sender naming a huge length must be
+// rejected on the prefix alone — the payload never gets allocated. This is
+// the anti-amplification contract the onion ingress depends on.
+func TestReadMsgCapRejectsOverlongPrefix(t *testing.T) {
+	s := &fakeStream{data: prefixedFrame(t, 1<<20, nil)} // claims 1MB
+	out, err := ReadMsgCap(s, 2*8192)
+	if err == nil {
+		t.Fatal("overlong prefix accepted")
+	}
+	if out != nil {
+		t.Fatal("payload allocated for rejected frame")
+	}
+}
+
+// TestReadMsgCapAcceptsBoundary: a frame exactly at the cap passes, one over
+// fails, and a zero-length frame is valid.
+func TestReadMsgCapAcceptsBoundary(t *testing.T) {
+	const cap = 16
+	body := bytes.Repeat([]byte{0x5A}, cap)
+	s := &fakeStream{data: prefixedFrame(t, cap, body)}
+	out, err := ReadMsgCap(s, cap)
+	if err != nil || !bytes.Equal(out, body) {
+		t.Fatalf("exact-cap frame rejected: %v", err)
+	}
+
+	s = &fakeStream{data: prefixedFrame(t, cap+1, append(body, 0))}
+	if _, err := ReadMsgCap(s, cap); err == nil {
+		t.Fatal("frame one over cap accepted")
+	}
+
+	s = &fakeStream{data: prefixedFrame(t, 0, nil)}
+	if out, err := ReadMsgCap(s, cap); err != nil || len(out) != 0 {
+		t.Fatalf("zero-length frame: out=%d err=%v", len(out), err)
+	}
+
+	s = &fakeStream{data: prefixedFrame(t, cap, body)}
+	if _, err := ReadMsgCap(s, MaxMessageSize+1); err == nil {
+		t.Fatal("cap above MaxMessageSize accepted")
 	}
 }

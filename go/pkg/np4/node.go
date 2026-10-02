@@ -94,6 +94,11 @@ const (
 	// stays 0 so tests and embeddings get deterministic traffic unless they
 	// opt in — the anonymity baseline measurement depends on that.
 	productionDummyRate = 0.5 // cells/s per node ≈ 1 cell per 2s
+
+	// defaultDirectBudget guards the unauthenticated direct protocol: far
+	// above any human chat pace, tight enough that a flood is throttled.
+	defaultDirectRate  = 5.0
+	defaultDirectBurst = 20
 )
 
 // ProductionDummyRate is the cover-traffic mean used by production
@@ -117,7 +122,8 @@ type Node struct {
 	seenMsg     *seenCache    // end-to-end msg_id dedup
 	dispatchSem chan struct{} // semaphore bounding flush goroutines
 
-	limiter *relayLimiter // per-peer ingress rate limit; nil = unlimited
+	limiter       *relayLimiter // per-peer onion ingress rate limit; nil = unlimited
+	directLimiter *relayLimiter // per-peer direct ingress budget (always on unless disabled)
 
 	contactMu   sync.RWMutex
 	contacts    map[peer.ID][]byte // verified-binding published ECDH keys, for sender verification
@@ -207,6 +213,11 @@ type config struct {
 	relayRate  float64
 	relayBurst int
 
+	// direct ingress budget (unauthenticated protocol, listens on every
+	// node); rate <= 0 disables it. Defaults to defaultDirectRate/burst.
+	directRate  float64
+	directBurst int
+
 	// contactRefresh controls the background sender-verification cache
 	// rebuild. 0 disables the loop (RefreshContacts must be called manually).
 	contactRefresh time.Duration
@@ -257,6 +268,13 @@ func WithAdmission(allow func(peer.ID) bool) Option { return func(c *config) { c
 // limiting. Intended for relay nodes (the bootstrap) facing untrusted clients.
 func WithRelayRateLimit(rate float64, burst int) Option {
 	return func(c *config) { c.relayRate, c.relayBurst = rate, burst }
+}
+
+// WithDirectRateLimit overrides the per-peer budget on the direct protocol
+// (default 5 msg/s, burst 20). rate <= 0 disables it — only sensible in
+// closed test setups, since the direct protocol is unauthenticated.
+func WithDirectRateLimit(rate float64, burst int) Option {
+	return func(c *config) { c.directRate, c.directBurst = rate, burst }
 }
 
 // WithContactRefreshInterval sets how often the sender-verification contact
@@ -333,6 +351,12 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 	n.dummyRate = cfg.dummyRate
 	if cfg.relayRate > 0 {
 		n.limiter = newRelayLimiter(cfg.relayRate, cfg.relayBurst)
+	}
+	if cfg.directRate == 0 {
+		cfg.directRate, cfg.directBurst = defaultDirectRate, defaultDirectBurst
+	}
+	if cfg.directRate > 0 {
+		n.directLimiter = newRelayLimiter(cfg.directRate, cfg.directBurst)
 	}
 	n.bus.Start()
 	// Capacity bounds memory under flood: the entry mix backpressures Send
@@ -685,7 +709,11 @@ func (n *Node) handleOnionStream(s network.Stream) {
 		fmt.Fprintf(os.Stderr, "[np4] ingress rate limited: %s\n", s.Conn().RemotePeer())
 		return
 	}
-	data, err := p2p.ReadMsg(s)
+	// Wire packets are exactly WireSize by protocol; the tight read cap
+	// keeps an overlong length prefix from allocating 1MB per stream before
+	// the size check can reject it (allocation-amplification guard — matters
+	// most on clients, which run no ingress limiter).
+	data, err := p2p.ReadMsgCap(s, 2*onion.WireSize)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[np4] onion read: %v\n", err)
 		return
@@ -763,6 +791,13 @@ func (n *Node) handleOnionStream(s network.Stream) {
 // handleDirectStream handles single-hop --direct messages.
 func (n *Node) handleDirectStream(s network.Stream) {
 	defer s.Close()
+	// The direct protocol carries no authentication (it IS the anonymity
+	// downgrade) and listens on every node, not just --insecure senders —
+	// without a budget it is an unthrottled UI-spam injection channel that
+	// bypasses the mix and the relay limiter entirely.
+	if n.directLimiter != nil && !n.directLimiter.allow(s.Conn().RemotePeer()) {
+		return
+	}
 	data, err := p2p.ReadMsg(s)
 	if err != nil {
 		return

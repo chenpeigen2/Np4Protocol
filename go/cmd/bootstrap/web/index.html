@@ -232,7 +232,7 @@
                                     <button class="copy-btn" data-copy="pid-${p.peer_id.slice(8,12)}">复制 ID</button></div>
                                 <div style="margin-top:4px">接入地址：</div>
                                 ${addrs}
-                                <div style="margin-top:4px">密钥指纹 <span class="mono">${p.ecdh_pub.slice(0, 16)}…</span></div>
+                                <div style="margin-top:4px">密钥指纹 <span class="mono">${(p.ecdh_pub || "").slice(0, 16)}…</span></div>
                             </div>
                         </details>
                     </div>`;

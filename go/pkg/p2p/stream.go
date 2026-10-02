@@ -26,12 +26,24 @@ func WriteMsg(s network.Stream, data []byte) error {
 
 // ReadMsg reads a length-prefixed message from a stream.
 func ReadMsg(s network.Stream) ([]byte, error) {
+	return ReadMsgCap(s, MaxMessageSize)
+}
+
+// ReadMsgCap reads a length-prefixed message, refusing (before any payload
+// allocation) lengths above cap. The plain length prefix lets a sender name
+// an arbitrary size; allocating first and reading second turns that into a
+// memory-allocation amplifier. Callers must pass the tightest bound their
+// protocol actually allows.
+func ReadMsgCap(s network.Stream, cap int) ([]byte, error) {
+	if cap > MaxMessageSize {
+		return nil, errors.New("cap exceeds message size limit")
+	}
 	var buf [4]byte
 	if _, err := io.ReadFull(s, buf[:]); err != nil {
 		return nil, err
 	}
 	length := binary.BigEndian.Uint32(buf[:])
-	if length > MaxMessageSize {
+	if length > uint32(cap) {
 		return nil, errors.New("message too large")
 	}
 	data := make([]byte, length)
