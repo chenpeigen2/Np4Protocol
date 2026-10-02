@@ -122,6 +122,13 @@ type DHTFinder struct {
 	Timeout time.Duration
 }
 
+// maxRelayLookups bounds how many relay candidates one FindRelays call
+// resolves — each candidate costs a DHT GetKey roundtrip, and an attacker
+// can flood the relay rendezvous with provider records in open-admission
+// mode. A bounded slice keeps path selection O(1) per call. (Review-verified
+// bound; a dedicated test would need a 65-provider topology.)
+const maxRelayLookups = 64
+
 // FindRelays queries the "np4-relay" rendezvous and resolves each candidate's
 // ECDH pubkey via GetValue. Peers whose pubkey is missing or unreadable are skipped.
 func (f *DHTFinder) FindRelays(ctx context.Context) ([]PeerInfo, error) {
@@ -136,8 +143,17 @@ func (f *DHTFinder) FindRelays(ctx context.Context) ([]PeerInfo, error) {
 		return nil, err
 	}
 
-	var out []PeerInfo
+	candidates := make([]peer.AddrInfo, 0, maxRelayLookups)
+examined:
 	for pi := range peerChan {
+		candidates = append(candidates, pi)
+		if len(candidates) >= maxRelayLookups {
+			break examined
+		}
+	}
+
+	var out []PeerInfo
+	for _, pi := range candidates {
 		pub, err := f.lookupKey(ctx, pi.ID)
 		if err != nil || len(pub) == 0 {
 			continue

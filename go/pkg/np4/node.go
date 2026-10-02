@@ -74,6 +74,11 @@ const (
 	peerAdvertiseTTL  = 2 * time.Minute
 	relayAdvertiseTTL = 5 * time.Minute
 
+	// maxDiscoveryLookups bounds how many rendezvous provider records one
+	// discovery call resolves (each costs a DHT roundtrip). Provider spam
+	// must not turn every Send / contact refresh into unbounded DHT work.
+	maxDiscoveryLookups = 64
+
 	// mixCapacity bounds the entry and relay mix buffers (~25 full batches):
 	// the entry mix backpressures Send with a hard error, the relay mix
 	// drops excess packets under flood instead of growing memory.
@@ -723,6 +728,15 @@ func (n *Node) handleOnionStream(s network.Stream) {
 		fmt.Fprintf(os.Stderr, "[np4] onion unwrap: %v\n", err)
 		return
 	}
+	// Inbound TTL ceiling: honest senders cap the initial TTL at
+	// MaxInitialTTL and it only decrements, so anything larger is crafted.
+	// Without this ceiling a single 8KB packet with ttl=255 forces up to 255
+	// decrypt rounds and 255 mix round-trips across the looped path — a
+	// cheap CPU/queue-occupancy amplifier against relays.
+	if ttl > onion.MaxInitialTTL {
+		fmt.Fprintf(os.Stderr, "[np4] crafted ttl %d exceeds MaxInitialTTL, dropping\n", ttl)
+		return
+	}
 	var eph [32]byte
 	copy(eph[:], layer[:32])
 	n.emitLinkEvent(LinkEvent{T: time.Now(), In: true, Peer: s.Conn().RemotePeer(), Eph: eph})
@@ -968,7 +982,16 @@ func (n *Node) ListPeers(ctx context.Context) ([]pathsel.PeerInfo, error) {
 		return nil, fmt.Errorf("find peers: %w", err)
 	}
 	var out []pathsel.PeerInfo
+	examined := 0
 	for pi := range peerChan {
+		// Provider-spam bound: an attacker can flood the rendezvous with
+		// provider records, and each candidate costs a DHT GetKey roundtrip.
+		// Examining a bounded slice keeps discovery O(1) per call; a friends
+		// network never has this many simultaneous contacts.
+		examined++
+		if examined > maxDiscoveryLookups {
+			break
+		}
 		if pi.ID == n.ID() {
 			continue
 		}
