@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	mathrand "math/rand"
 	"os"
 	"sync"
 	"time"
@@ -30,8 +29,13 @@ func WithCapacity[T any](n int) Option[T] {
 }
 
 // MixEngine batches messages, shuffles them, and flushes either when batchSize
-// is reached or maxDelay elapses. The shuffle order is seeded from crypto/rand
-// so it varies across process restarts.
+// is reached or maxDelay elapses.
+//
+// The shuffle draws fresh randomness from crypto/rand per swap — STATELESS by
+// design. A seeded PRNG (the historical approach) carries a brute-forceable
+// seed: batch permutations are observable output (~22 bits of constraint per
+// 10-item batch), so a global observer recording long enough could recover a
+// 62-bit offline seed and replay every historical shuffle mapping.
 type MixEngine[T any] struct {
 	buffer    []*T
 	batchSize int
@@ -41,32 +45,28 @@ type MixEngine[T any] struct {
 	mu        sync.Mutex
 	timer     *time.Timer
 	closed    bool
-	rnd       *lockedRand
 }
 
-// lockedRand wraps math/rand.Rand with a mutex for concurrent Shuffle use.
-type lockedRand struct {
-	mu sync.Mutex
-	r  *mathrand.Rand
-}
-
-func (lr *lockedRand) Shuffle(n int, swap func(i, j int)) {
-	lr.mu.Lock()
-	defer lr.mu.Unlock()
-	lr.r.Shuffle(n, swap)
+// cryptoShuffle is a Fisher-Yates shuffle drawing each swap index from
+// crypto/rand — no PRNG state to recover. On the (exceptional) failure of
+// rand.Reader it returns early, flushing in near-original order: degraded
+// mixing for one batch beats losing the process or stalling the queue.
+func cryptoShuffle(n int, swap func(i, j int)) {
+	for i := n - 1; i > 0; i-- {
+		j, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[mix] crypto/rand failed, flushing partially unshuffled: %v\n", err)
+			return
+		}
+		swap(i, int(j.Int64()))
+	}
 }
 
 func NewMixEngine[T any](batchSize int, maxDelay time.Duration, onFlush func([]*T), opts ...Option[T]) *MixEngine[T] {
-	seedInt, err := rand.Int(rand.Reader, big.NewInt(1<<62))
-	if err != nil {
-		// crypto/rand failure is exceptional; fall back to time-based seed.
-		seedInt = big.NewInt(time.Now().UnixNano())
-	}
 	m := &MixEngine[T]{
 		batchSize: batchSize,
 		maxDelay:  maxDelay,
 		onFlush:   onFlush,
-		rnd:       &lockedRand{r: mathrand.New(mathrand.NewSource(seedInt.Int64()))},
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -139,7 +139,7 @@ func (m *MixEngine[T]) flushLocked() {
 		m.timer.Stop()
 		m.timer = nil
 	}
-	m.rnd.Shuffle(len(m.buffer), func(i, j int) {
+	cryptoShuffle(len(m.buffer), func(i, j int) {
 		m.buffer[i], m.buffer[j] = m.buffer[j], m.buffer[i]
 	})
 	batch := m.buffer
