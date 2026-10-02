@@ -3,152 +3,128 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Np4Protocol Bootstrap Node</title>
+    <title>NP4 网络状态</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
-            background: #0a0a0a;
-            color: #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: #0a0f1c;
+            color: #e9edf5;
             min-height: 100vh;
-            padding: 2rem;
+            padding: 2rem 1rem;
         }
-        .container { max-width: 900px; margin: 0 auto; }
-        h1 {
-            font-size: 1.5rem;
-            color: #00ff88;
-            margin-bottom: 0.5rem;
+        .container { max-width: 760px; margin: 0 auto; }
+        h1 { font-size: 1.4rem; font-weight: 700; }
+        .subtitle { color: #5a6378; font-size: 0.8rem; margin: 0.3rem 0 1.6rem; }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.8rem;
+            margin-bottom: 1.6rem;
         }
-        .subtitle {
-            color: #666;
-            font-size: 0.85rem;
-            margin-bottom: 2rem;
+        .stat {
+            background: #121a2c;
+            border: 1px solid #202c47;
+            border-radius: 14px;
+            padding: 1rem 1.2rem;
         }
+        .stat .num { font-size: 1.7rem; font-weight: 700; }
+        .stat .label { color: #8b94ab; font-size: 0.75rem; margin-top: 2px; }
+
         .card {
-            background: #111;
-            border: 1px solid #222;
-            border-radius: 8px;
-            padding: 1.5rem;
+            background: #121a2c;
+            border: 1px solid #202c47;
+            border-radius: 14px;
+            padding: 1.2rem 1.4rem;
             margin-bottom: 1rem;
         }
         .card h2 {
-            font-size: 0.85rem;
-            color: #888;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            margin-bottom: 1rem;
-        }
-        .status-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 0.5rem 0;
-            border-bottom: 1px solid #1a1a1a;
-        }
-        .status-row:last-child { border-bottom: none; }
-        .label { color: #666; }
-        .value { color: #fff; font-family: monospace; }
-        .online { color: #00ff88; }
-        .peer-id {
-            font-family: monospace;
-            color: #00ff88;
-            word-break: break-all;
-            font-size: 0.9rem;
-        }
-        .addr-list {
-            list-style: none;
-            padding: 0;
-        }
-        .addr-list li {
-            font-family: monospace;
             font-size: 0.8rem;
-            color: #aaa;
-            padding: 0.3rem 0;
-            padding-left: 1rem;
-            position: relative;
+            color: #8b94ab;
+            font-weight: 600;
+            margin-bottom: 0.9rem;
         }
-        .addr-list li::before {
-            content: '›';
-            position: absolute;
-            left: 0;
-            color: #00ff88;
+        .dot {
+            display: inline-block;
+            width: 9px; height: 9px; border-radius: 50%;
+            margin-right: 0.6rem;
+            vertical-align: middle;
         }
-        .peer-card {
-            background: #0d0d0d;
-            border: 1px solid #1a1a1a;
-            border-radius: 6px;
-            padding: 1rem;
-            margin-top: 0.5rem;
+        .dot.on { background: #34d399; box-shadow: 0 0 6px rgba(52,211,153,.7); }
+        .dot.off { background: #3a4256; }
+
+        .node-row {
+            padding: 0.7rem 0;
+            border-bottom: 1px solid #1a2338;
         }
-        .peer-card .peer-id { font-size: 0.8rem; color: #aaa; }
-        .peer-head {
+        .node-row:last-child { border-bottom: none; }
+        .node-main {
             display: flex;
             align-items: center;
-            gap: 0.5rem;
-            margin-bottom: 0.4rem;
+            gap: 0.6rem;
+            font-size: 0.95rem;
         }
-        .peer-head .peer-id { flex: 1; word-break: break-all; }
-        .conn-dot {
-            display: inline-block;
-            width: 8px; height: 8px; border-radius: 50%;
-            flex: none;
-        }
-        .conn-dot.on { background: #00ff88; }
-        .conn-dot.off { background: #555; }
+        .node-name { font-weight: 600; }
         .badge {
             font-size: 0.65rem;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            padding: 0.15rem 0.45rem;
-            border-radius: 3px;
-            flex: none;
+            padding: 0.15rem 0.5rem;
+            border-radius: 999px;
+            background: #12301f;
+            color: #34d399;
+            border: 1px solid rgba(52,211,153,.3);
         }
-        .badge.relay { background: #003322; color: #00ff88; border: 1px solid #00553a; }
-        .fingerprint {
-            font-family: monospace;
-            font-size: 0.7rem;
-            color: #666;
-            margin-bottom: 0.3rem;
-        }
-        .copy-btn {
-            background: #1a1a1a;
-            border: 1px solid #333;
-            color: #888;
-            font-size: 0.65rem;
-            padding: 0.2rem 0.5rem;
-            border-radius: 3px;
+        .state-text { margin-left: auto; color: #8b94ab; font-size: 0.8rem; }
+        .state-text.off { color: #5a6378; }
+
+        details { margin-top: 0.4rem; }
+        summary {
             cursor: pointer;
-            flex: none;
+            color: #5a6378;
+            font-size: 0.75rem;
+            user-select: none;
+            width: fit-content;
         }
-        .copy-btn:hover { color: #00ff88; border-color: #00553a; }
-        .empty { color: #444; font-style: italic; }
+        summary:hover { color: #8b94ab; }
+        .detail-body {
+            margin-top: 0.6rem;
+            padding: 0.8rem;
+            background: #0d1424;
+            border-radius: 10px;
+            font-size: 0.75rem;
+            color: #8b94ab;
+            line-height: 1.7;
+        }
+        .mono { font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+        .copy-btn {
+            background: #1a2338;
+            border: 1px solid #202c47;
+            color: #8b94ab;
+            font-size: 0.65rem;
+            padding: 0.15rem 0.5rem;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-left: 0.4rem;
+        }
+        .copy-btn:hover { color: #34d399; border-color: rgba(52,211,153,.4); }
+
+        .empty { color: #5a6378; font-style: normal; padding: 1rem 0; text-align: center; }
+        .note { color: #5a6378; font-size: 0.75rem; margin-top: 0.8rem; line-height: 1.6; }
         .refresh-btn {
-            background: #1a1a1a;
-            border: 1px solid #333;
-            color: #00ff88;
-            padding: 0.5rem 1rem;
-            border-radius: 4px;
+            background: #1a2338;
+            border: 1px solid #202c47;
+            color: #34d399;
+            padding: 0.45rem 1rem;
+            border-radius: 10px;
             cursor: pointer;
             font-size: 0.8rem;
         }
-        .refresh-btn:hover { background: #222; }
+        .refresh-btn:hover { background: #202c47; }
         .header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 2rem;
-        }
-        .dot {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #00ff88;
-            margin-right: 0.5rem;
-            animation: pulse 2s infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
+            margin-bottom: 1.2rem;
         }
     </style>
 </head>
@@ -156,43 +132,39 @@
     <div class="container">
         <div class="header">
             <div>
-                <h1>Np4Protocol</h1>
-                <div class="subtitle">Bootstrap Node Dashboard</div>
+                <h1>NP4 网络状态</h1>
+                <div class="subtitle">每 5 秒自动刷新 · 数据来自本服务器</div>
             </div>
-            <button class="refresh-btn" onclick="refresh()">Refresh</button>
+            <button class="refresh-btn" onclick="refresh()">立即刷新</button>
         </div>
 
-        <div class="card">
-            <h2>Node Status</h2>
-            <div class="status-row">
-                <span class="label">Status</span>
-                <span class="value"><span class="dot"></span><span id="status">loading...</span></span>
+        <div class="stats">
+            <div class="stat">
+                <div class="num" id="stat-nodes">–</div>
+                <div class="label">在线节点</div>
             </div>
-            <div class="status-row">
-                <span class="label">Peer ID</span>
-                <span class="peer-id" id="peer-id">-</span>
+            <div class="stat">
+                <div class="num" id="stat-relays">–</div>
+                <div class="label">在线中继</div>
             </div>
-            <div class="status-row">
-                <span class="label">Uptime</span>
-                <span class="value" id="uptime">-</span>
-            </div>
-            <div class="status-row">
-                <span class="label">Connected Peers</span>
-                <span class="value" id="dht-peers">-</span>
+            <div class="stat">
+                <div class="num" id="stat-uptime" style="font-size:1.15rem; padding-top:0.35rem;">–</div>
+                <div class="label">本服务器已运行</div>
             </div>
         </div>
 
         <div class="card">
-            <h2>Addresses</h2>
-            <ul class="addr-list" id="addresses">
-                <li class="empty">loading...</li>
-            </ul>
+            <h2>节点列表</h2>
+            <div id="nodes"><div class="empty">加载中…</div></div>
+            <div class="note" id="relay-note"></div>
         </div>
 
         <div class="card">
-            <h2>Directory 通讯录 (<span id="peer-count">0</span>)</h2>
-            <div id="peers">
-                <div class="empty">No addressable nodes</div>
+            <h2>服务器接入信息（给客户端用）</h2>
+            <div class="detail-body" id="server-info">
+                <div>完整 ID <span class="mono" id="server-id">–</span><button class="copy-btn" data-copy="server-id">复制</button></div>
+                <div style="margin-top:6px" id="server-addrs">–</div>
+                <div style="margin-top:6px; color:#5a6378">客户端填 multiaddr 时，把里面的内网 IP 换成这台服务器的公网 IP。</div>
             </div>
         </div>
     </div>
@@ -200,70 +172,85 @@
     <script>
         const API = window.location.origin;
 
-        async function fetchStatus() {
-            try {
-                const res = await fetch(`${API}/api/status`);
-                const data = await res.json();
-                document.getElementById('status').textContent = data.status;
-                document.getElementById('peer-id').textContent = data.peer_id;
-                document.getElementById('uptime').textContent = data.uptime;
-                document.getElementById('dht-peers').textContent = data.dht_peers;
-
-                const addrList = document.getElementById('addresses');
-                addrList.innerHTML = data.addresses.map(a => `<li>${a}</li>`).join('');
-            } catch (e) {
-                document.getElementById('status').textContent = 'offline';
-            }
+        function shortName(pid) {
+            return '节点-' + pid.slice(8, 12);
         }
 
-        let lastDir = [];
-
-        async function fetchPeers() {
-            try {
-                const res = await fetch(`${API}/api/directory`);
-                if (!res.ok) throw new Error(res.status);
-                lastDir = await res.json();
-                document.getElementById('peer-count').textContent = lastDir.length;
-
-                const container = document.getElementById('peers');
-                if (lastDir.length === 0) {
-                    container.innerHTML = '<div class="empty">No addressable nodes</div>';
-                    return;
-                }
-
-                container.innerHTML = lastDir.map(p => `
-                    <div class="peer-card">
-                        <div class="peer-head">
-                            <span class="conn-dot ${p.connected ? 'on' : 'off'}" title="${p.connected ? 'connected' : 'offline'}"></span>
-                            <span class="peer-id">${p.peer_id}</span>
-                            ${p.is_relay ? '<span class="badge relay">relay</span>' : ''}
-                            <button class="copy-btn" data-id="${p.peer_id}">Copy JSON</button>
-                        </div>
-                        <div class="fingerprint">onion key: ${p.ecdh_pub.slice(0, 16)}…</div>
-                        <ul class="addr-list">
-                            ${(p.addrs || []).map(a => `<li>${a}</li>`).join('') || '<li class="empty">no addresses yet</li>'}
-                        </ul>
-                    </div>
-                `).join('');
-            } catch (e) {
-                document.getElementById('peers').innerHTML = '<div class="empty">Failed to load</div>';
-            }
+        function copyText(text) {
+            navigator.clipboard.writeText(text);
         }
 
-        // Copy the full address-book entry: exactly what a client needs to
-        // add this node as a contact (peer_id, addrs, ecdh_pub, flags).
         document.addEventListener('click', (ev) => {
             const btn = ev.target.closest('.copy-btn');
-            if (!btn) return;
-            const entry = lastDir.find(p => p.peer_id === btn.dataset.id);
-            if (entry) navigator.clipboard.writeText(JSON.stringify(entry, null, 2));
+            if (btn) copyText(document.getElementById(btn.dataset.copy).textContent.trim());
+            const cp = ev.target.closest('[data-copyraw]');
+            if (cp) copyText(cp.dataset.copyraw);
         });
 
-        function refresh() {
-            fetchStatus();
-            fetchPeers();
+        async function fetchAll() {
+            let status = null, dir = [];
+            try {
+                status = await (await fetch(`${API}/api/status`)).json();
+            } catch (e) { /* offline */ }
+            try {
+                dir = await (await fetch(`${API}/api/directory`)).json();
+            } catch (e) { /* offline */ }
+            render(status, dir);
         }
 
+        function render(status, dir) {
+            const running = !!status;
+            document.getElementById('stat-nodes').textContent = running ? dir.length - 1 : '–';
+            const selfIsRelay = status && dir.some(p => p.peer_id === status.peer_id && p.is_relay);
+            const listedRelays = dir.filter(p => status && p.peer_id !== status.peer_id && p.is_relay).length;
+            document.getElementById('stat-relays').textContent = running ? listedRelays + (selfIsRelay ? 1 : 0) : '–';
+            document.getElementById('stat-uptime').textContent = running ? status.uptime : '已停止';
+
+            const box = document.getElementById('nodes');
+            const others = status ? dir.filter(p => p.peer_id !== status.peer_id) : [];
+            if (!running) {
+                box.innerHTML = '<div class="empty">面板与服务器失去连接</div>';
+            } else if (others.length === 0) {
+                box.innerHTML = '<div class="empty">还没有其他节点在线 —— 打开一个客户端后，这里会出现它的名字</div>';
+            } else {
+                box.innerHTML = others.map(p => {
+                    const name = shortName(p.peer_id);
+                    const addrs = (p.addrs || []).map(a =>
+                        `<div class="mono">· ${a}</div>`).join('') || '<div>（暂无地址）</div>';
+                    return `
+                    <div class="node-row">
+                        <div class="node-main">
+                            <span class="dot ${p.connected ? 'on' : 'off'}"></span>
+                            <span class="node-name">${name}</span>
+                            ${p.is_relay ? '<span class="badge">中继</span>' : ''}
+                            <span class="state-text ${p.connected ? '' : 'off'}">${p.connected ? '在线' : '离线'}</span>
+                        </div>
+                        <details>
+                            <summary>详细信息</summary>
+                            <div class="detail-body">
+                                <div>完整 ID <span class="mono" id="pid-${p.peer_id.slice(8,12)}">${p.peer_id}</span>
+                                    <button class="copy-btn" data-copy="pid-${p.peer_id.slice(8,12)}">复制 ID</button></div>
+                                <div style="margin-top:4px">接入地址：</div>
+                                ${addrs}
+                                <div style="margin-top:4px">密钥指纹 <span class="mono">${p.ecdh_pub.slice(0, 16)}…</span></div>
+                            </div>
+                        </details>
+                    </div>`;
+                }).join('');
+            }
+
+            document.getElementById('relay-note').textContent = running
+                ? `本服务器自己担任 1 个中继（不出现在上面的列表里）。${others.some(p => p.is_relay) ? '另有 ' + listedRelays + ' 个中继来自其他节点。' : '接入地址在下方，填进客户端即可加入网络。'}`
+                : '';
+
+            if (running) {
+                document.getElementById('server-id').textContent = status.peer_id;
+                document.getElementById('server-addrs').innerHTML =
+                    (status.addresses || []).map(a => `<div class="mono">· ${a}</div>`).join('');
+            }
+        }
+
+        function refresh() { fetchAll(); }
         refresh();
         setInterval(refresh, 5000);
     </script>
