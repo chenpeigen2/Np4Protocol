@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app/connect_screen.dart';
+import 'app/theme.dart';
 
 void main() {
   runApp(const Np4App());
@@ -11,14 +12,13 @@ class Np4App extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Forced dark: a privacy tool with one deliberate look, not a themeable
+    // toy. Both slots share the dark scheme so system switching is a no-op.
     return MaterialApp(
       title: 'NP4 匿名聊天',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3B5BDB)),
-        useMaterial3: true,
-      ),
-      darkTheme:
-          ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3B5BDB), brightness: Brightness.dark)),
+      theme: buildNp4Theme(),
+      darkTheme: buildNp4Theme(),
+      themeMode: ThemeMode.dark,
       home: const ConnectScreen(),
     );
   }
