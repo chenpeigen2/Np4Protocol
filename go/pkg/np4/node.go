@@ -832,10 +832,16 @@ func (n *Node) handleDirectStream(s network.Stream) {
 	if err := json.Unmarshal(data, &msg); err != nil {
 		return
 	}
-	// Only accept direct messages actually addressed to us.
-	if msg.DestID != "" && msg.DestID != n.ID().String() {
+	// The direct protocol is strictly 1:1 — SendDirect always addresses a
+	// specific node. An empty DestID would be a broadcast claim accepted by
+	// every dialable node at once; no legitimate sender produces it.
+	if msg.DestID != n.ID().String() {
 		return
 	}
+	// There is no sender-auth tag on the direct protocol, so verification is
+	// IMPOSSIBLE here — a wire-supplied Verified=true would forge the "✓
+	// 已验证" badge in the UI. Direct messages are always unverified.
+	msg.Verified = false
 	n.bus.Send(&msg)
 }
 
