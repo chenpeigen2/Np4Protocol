@@ -10,6 +10,7 @@ import (
 
 	"Np4Protocol/go/pkg/pathsel"
 
+	ds "github.com/ipfs/go-datastore"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	record "github.com/libp2p/go-libp2p-record"
 	"github.com/libp2p/go-libp2p-kad-dht/records"
@@ -122,6 +123,11 @@ func StartDHT(ctx context.Context, h host.Host, bootstrapPeers []peer.AddrInfo, 
 	kademliaDHT, err := dht.New(ctx, h,
 		dht.BootstrapPeers(bootstrapPeers...),
 		dht.Mode(dht.ModeServer),
+		// Bound the record store: kad-dht's default is an unbounded in-memory
+		// map, and the /kad stream bypasses the onion ingress limiter —
+		// without a cap, record flooding exhausts every ModeServer node's
+		// memory in open-admission mode.
+		dht.Datastore(newBoundedDatastore(ds.NewMapDatastore())),
 		dht.ProviderManagerOpts(records.ProvideValidity(providerRecordValidity)),
 	)
 	if err != nil {
