@@ -841,8 +841,17 @@ func (n *Node) handleDirectStream(s network.Stream) {
 	// There is no sender-auth tag on the direct protocol, so verification is
 	// IMPOSSIBLE here — a wire-supplied Verified=true would forge the "✓
 	// 已验证" badge in the UI. Direct messages are always unverified.
-	msg.Verified = false
-	n.bus.Send(&msg)
+	//
+	// Rebuild the message from the fields the protocol honors instead of
+	// dispatching the unmarshaled struct: wire-supplied slots that no handler
+	// consumes today (SessionKey) must never reach the application either.
+	n.bus.Send(&message.Message{
+		Type:     message.TypeAsync,
+		DestID:   msg.DestID,
+		SenderID: msg.SenderID,
+		Verified: false,
+		Content:  msg.Content,
+	})
 }
 
 // waitForDHTPeers blocks until the DHT routing table has at least min peers or

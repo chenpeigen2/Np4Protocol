@@ -117,3 +117,45 @@ func sendRawDirect(n *Node, dest peer.ID, msg *message.Message) error {
 	}
 	return p2p.WriteMsg(s, data)
 }
+
+// TestDirectSessionKeyNotInjected pins the wire-field hygiene on the direct
+// protocol: message.Message carries a SessionKey slot (legacy). No handler
+// consumes it today, but a wire-supplied key must never land in application
+// structs — the same class of hole as the forged Verified badge.
+func TestDirectSessionKeyNotInjected(t *testing.T) {
+	dir := t.TempDir()
+	snd, err := NewNode(0, WithIdentity(filepath.Join(dir, "snd")))
+	if err != nil {
+		t.Fatalf("snd: %v", err)
+	}
+	defer snd.Close()
+	rcv, err := NewNode(0, WithIdentity(filepath.Join(dir, "rcv")))
+	if err != nil {
+		t.Fatalf("rcv: %v", err)
+	}
+	defer rcv.Close()
+	if err := snd.Connect(peer.AddrInfo{ID: rcv.ID(), Addrs: rcv.Host().Addrs()}); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	ch := make(chan *message.Message, 4)
+	rcv.OnMessage(func(m *message.Message) { ch <- m })
+
+	if err := sendRawDirect(snd, rcv.ID(), &message.Message{
+		DestID:     rcv.ID().String(),
+		SenderID:   "anonymous",
+		Content:    []byte("payload"),
+		SessionKey: []byte("attacker-chosen key material"),
+	}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	select {
+	case m := <-ch:
+		if len(m.SessionKey) != 0 {
+			t.Fatalf("wire-supplied SessionKey reached the application (%d bytes)", len(m.SessionKey))
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("direct message not delivered")
+	}
+}

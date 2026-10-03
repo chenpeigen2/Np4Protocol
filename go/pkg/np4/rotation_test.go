@@ -8,6 +8,9 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/peer"
 
+	"Np4Protocol/go/pkg/cell"
+	"Np4Protocol/go/pkg/message"
+	"Np4Protocol/go/pkg/onion"
 	"Np4Protocol/go/pkg/pathsel"
 )
 
@@ -139,5 +142,66 @@ func TestRepublishedKeyResolves(t *testing.T) {
 	m := awaitMessage(t, net.rcv, 30*time.Second)
 	if string(m.Content) != "to the fresh subkey" || !m.Verified {
 		t.Fatalf("fresh-subkey message broken: content=%q verified=%v", m.Content, m.Verified)
+	}
+}
+
+// TestReplayDiesAfterRetentionExpiry pins the forward-secrecy end state: a
+// wire packet addressed to a subkey whose bucket has fallen out of the
+// retention window must be undeliverable — the private key is destroyed, so
+// neither the original replay nor any re-wrapped variant can open it. The
+// same packet was deliverable while the key was retained (covered by
+// TestMessageDeliveredAcrossRotation).
+func TestReplayDiesAfterRetentionExpiry(t *testing.T) {
+	net := rotationNet(t) // 1s buckets, retained window = 7 buckets
+
+	// Capture a packet addressed to the receiver's CURRENT subkey.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := net.rcv.RefreshContacts(ctx); err != nil {
+		t.Fatalf("RefreshContacts: %v", err)
+	}
+	destPub, err := net.snd.lookupDestPub(net.rcv.ID())
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	msgID, err := cell.NewMsgID()
+	if err != nil {
+		t.Fatalf("msg id: %v", err)
+	}
+	c, err := cell.Seal(msgID, cell.TypeText, make([]byte, cell.TagSize), []byte("captured today"))
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	hops := []onion.Hop{
+		{PeerID: net.boot.ID(), ECDHPub: net.boot.identity.ECDHPub()},
+		{PeerID: net.rcv.ID(), ECDHPub: destPub},
+	}
+	on, err := onion.Build(hops, c)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	wirePkt, err := onion.Wrap(1, on.Bytes())
+	if err != nil {
+		t.Fatalf("wrap: %v", err)
+	}
+
+	// Shrink the receiver's retention window to 3 buckets and advance well
+	// past it (1s buckets): the rotation loop prunes the subkey this packet
+	// was sealed to, so the captured wire packet becomes undecryptable —
+	// forward secrecy's end state, pinned end to end.
+	net.rcv.identity.SetTestRetention(3)
+	time.Sleep(9 * time.Second)
+
+	received := make(chan string, 4)
+	net.rcv.OnMessage(func(m *message.Message) { received <- string(m.Content) })
+	if err := sendWire(net.snd, net.boot.ID(), wirePkt); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	select {
+	case got := <-received:
+		t.Fatalf("expired-subkey packet delivered: %q — retention window is not enforcing forward secrecy", got)
+	case <-time.After(4 * time.Second):
+		// dropped, as forward secrecy requires
 	}
 }

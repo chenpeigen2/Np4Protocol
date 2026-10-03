@@ -29,11 +29,12 @@ type Identity struct {
 	// Forward-secrecy key schedule (rotation.go): random per-bucket subkeys
 	// with a persisted retention window. mu guards the window — it mutates
 	// on the rotation loop while send/receive paths read it.
-	mu           sync.RWMutex
-	rotKeys      []rotatedKey // current first, oldest last
-	bucketPeriod time.Duration
-	nowFn        func() time.Time
-	sidecarPath  string // empty = ephemeral (no persistence)
+	mu                sync.RWMutex
+	rotKeys           []rotatedKey // current first, oldest last
+	bucketPeriod      time.Duration
+	retentionOverride *int64 // TEST-ONLY retention window in buckets
+	nowFn             func() time.Time
+	sidecarPath       string // empty = ephemeral (no persistence)
 }
 
 func nowDefault() time.Time { return time.Now() }
@@ -155,9 +156,9 @@ func fromSeed(seed []byte) (*Identity, error) {
 	// seed, so a stolen seed file cannot decrypt recorded history beyond the
 	// retention window.
 	return &Identity{
-		priv:     libp2pPriv,
-		stdPriv:  edPriv,
-		signPub:  append([]byte(nil), edPriv.Public().(ed25519.PublicKey)...),
+		priv:         libp2pPriv,
+		stdPriv:      edPriv,
+		signPub:      append([]byte(nil), edPriv.Public().(ed25519.PublicKey)...),
 		bucketPeriod: RotationPeriod,
 		nowFn:        nowDefault,
 	}, nil

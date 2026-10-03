@@ -101,6 +101,12 @@ func (i *Identity) pruneLocked(cur int64) (changed bool) {
 	if keepBuckets < 1 {
 		keepBuckets = 1
 	}
+	// TEST-ONLY override: second-scale rotation buckets would otherwise pin
+	// the retention window at 7 wall-clock days (604800 tiny buckets),
+	// making the forward-secrecy expiry property untestable end to end.
+	if i.retentionOverride != nil {
+		keepBuckets = *i.retentionOverride
+	}
 	kept := i.rotKeys[:0]
 	for _, k := range i.rotKeys {
 		if cur-k.bucket <= keepBuckets {
@@ -283,6 +289,15 @@ func (i *Identity) SetTestRotation(nowFn func() time.Time, period time.Duration)
 	defer i.mu.Unlock()
 	i.nowFn = nowFn
 	i.bucketPeriod = period
+}
+
+// SetTestRetention overrides the retention window in BUCKETS. TEST-ONLY
+// companion to SetTestRotation: without it the window stays 7 wall-clock
+// days regardless of the (shrunken) bucket period.
+func (i *Identity) SetTestRetention(buckets int64) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.retentionOverride = &buckets
 }
 
 // initRotation loads (or lazily creates) the subkey window after the master
