@@ -30,7 +30,10 @@ var ErrRecordStoreFull = errors.New("dht record store full")
 // boundedDatastore wraps a batching datastore with a hard cap on the number
 // of stored keys. Everything else (Get, Query, ...) delegates untouched.
 type boundedDatastore struct {
-	mu    sync.Mutex
+	// mu guards count AND delegates inner access: kad-dht serves Get/Query
+	// from handler goroutines concurrently with Put/Batch writes — the
+	// counter and the underlying map must be traversed under the same lock.
+	mu    sync.RWMutex
 	inner ds.Batching
 	count int
 }
@@ -64,14 +67,20 @@ func (b *boundedDatastore) Put(ctx context.Context, k ds.Key, value []byte) erro
 }
 
 func (b *boundedDatastore) Get(ctx context.Context, k ds.Key) ([]byte, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	return b.inner.Get(ctx, k)
 }
 
 func (b *boundedDatastore) Has(ctx context.Context, k ds.Key) (bool, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	return b.inner.Has(ctx, k)
 }
 
 func (b *boundedDatastore) GetSize(ctx context.Context, k ds.Key) (int, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	return b.inner.GetSize(ctx, k)
 }
 
@@ -92,6 +101,8 @@ func (b *boundedDatastore) Delete(ctx context.Context, k ds.Key) error {
 }
 
 func (b *boundedDatastore) Query(ctx context.Context, q dsq.Query) (dsq.Results, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	return b.inner.Query(ctx, q)
 }
 

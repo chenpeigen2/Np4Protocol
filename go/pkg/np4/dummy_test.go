@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -106,25 +107,31 @@ func TestDummyNeverDelivered(t *testing.T) {
 		t.Fatalf("RefreshContacts: %v", err)
 	}
 
-	received := make(chan string, 64)
-	net.rcv.OnMessage(func(m *message.Message) { received <- string(m.Content) })
-
+	// Delivery is asynchronous and may straddle the observation window —
+	// count under a mutex; closing a channel a handler still writes to
+	// panics (the same trap direct_limit_test avoided).
 	const real = "the one real message"
+	var mu sync.Mutex
+	count := 0
+	net.rcv.OnMessage(func(m *message.Message) {
+		mu.Lock()
+		count++
+		content := string(m.Content)
+		mu.Unlock()
+		if content != real {
+			t.Errorf("non-real content delivered: %q", content)
+		}
+	})
 	if err := snd2.Send(net.rcv.ID(), []byte(real)); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	// ~40 mean dummies at 10 cells/s should have been attempted by now.
 	time.Sleep(5 * time.Second)
 
-	close(received)
-	count := 0
-	for content := range received {
-		count++
-		if content != real {
-			t.Fatalf("non-real content delivered: %q", content)
-		}
-	}
-	if count != 1 {
-		t.Fatalf("delivered %d messages, want exactly the 1 real one (dummy leak)", count)
+	mu.Lock()
+	delivered := count
+	mu.Unlock()
+	if delivered != 1 {
+		t.Fatalf("delivered %d messages, want exactly the 1 real one (dummy leak)", delivered)
 	}
 }

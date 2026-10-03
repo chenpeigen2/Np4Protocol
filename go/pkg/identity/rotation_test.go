@@ -199,3 +199,48 @@ func TestSignUsesMasterKey(t *testing.T) {
 		t.Fatal("signature verifies under different payload")
 	}
 }
+
+// TestCorruptSidecarRecoversToFreshWindow pins the failure recovery of the
+// persisted key schedule: a corrupt sidecar must never brick the identity —
+// the node starts a fresh subkey window (peers address the new subkey on
+// their next fetch) and the next rotation persists a VALID sidecar again.
+func TestCorruptSidecarRecoversToFreshWindow(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "id")
+	id, _ := rotationFixture(t, dir, time.Hour)
+	_ = id
+
+	if err := os.WriteFile(sidecarPath(path), []byte("{corrupt json!!!"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := LoadOrCreate(path)
+	if err != nil {
+		t.Fatalf("corrupt sidecar must not brick the identity: %v", err)
+	}
+	reloaded.SetTestRotation(func() time.Time { return time.Now() }, time.Hour)
+	if _, err := reloaded.EnsureCurrentBucket(); err != nil {
+		t.Fatalf("rotation after corrupt sidecar: %v", err)
+	}
+	if len(reloaded.ECDHPrivs()) == 0 {
+		t.Fatal("no subkeys after recovery")
+	}
+	if _, err := os.Stat(sidecarPath(path)); err != nil {
+		t.Fatalf("sidecar not repersisted: %v", err)
+	}
+
+	// Structurally-valid JSON with undecodable keys also recovers.
+	if err := os.WriteFile(sidecarPath(path), []byte(`{"keys":[{"bucket":1,"priv":"!!!!not-base64!!!!"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reloaded2, err := LoadOrCreate(path)
+	if err != nil {
+		t.Fatalf("reload with garbage keys: %v", err)
+	}
+	reloaded2.SetTestRotation(func() time.Time { return time.Now() }, time.Hour)
+	if _, err := reloaded2.EnsureCurrentBucket(); err != nil {
+		t.Fatalf("rotation after garbage keys: %v", err)
+	}
+	if len(reloaded2.ECDHPrivs()) == 0 {
+		t.Fatal("no subkeys after garbage-key recovery")
+	}
+}
