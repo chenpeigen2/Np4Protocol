@@ -23,15 +23,25 @@ class ConnectScreen extends StatefulWidget {
   State<ConnectScreen> createState() => _ConnectScreenState();
 }
 
-class _ConnectScreenState extends State<ConnectScreen> {
+class _ConnectScreenState extends State<ConnectScreen>
+    with SingleTickerProviderStateMixin {
   final _bootstrapCtrl = TextEditingController();
   final _hopsCtrl = TextEditingController(text: '1');
   bool _connecting = false;
   String _status = '';
+  // One controller drives the shield pulse (below) on repeat.
+  late final AnimationController _pulseFx = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2200),
+  );
+  late final Animation<double> _pulse = Tween(begin: 0.0, end: 1.0).animate(
+    CurvedAnimation(parent: _pulseFx, curve: Curves.easeInOut),
+  );
 
   @override
   void initState() {
     super.initState();
+    _pulseFx.repeat(reverse: true);
     if (_kEnvBootstrap.isNotEmpty) {
       _bootstrapCtrl.text = _kEnvBootstrap;
     }
@@ -42,6 +52,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   @override
   void dispose() {
+    _pulseFx.dispose();
     _bootstrapCtrl.dispose();
     _hopsCtrl.dispose();
     super.dispose();
@@ -118,19 +129,40 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     children: [
                       const SizedBox(height: 24),
                       Center(
-                        child: Container(
-                          width: 92,
-                          height: 92,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Np4Colors.accentContainer,
-                            border: Border.all(
-                              color: Np4Colors.accent.withValues(alpha: 0.35),
-                              width: 1.2,
-                            ),
-                          ),
-                          child: const Icon(Icons.shield_outlined,
-                              size: 44, color: Np4Colors.accent),
+                        child: AnimatedBuilder(
+                          animation: _pulse,
+                          builder: (ctx, _) {
+                            final t = _pulse.value;
+                            return Container(
+                              width: 92 + 26 * t,
+                              height: 92 + 26 * t,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Np4Colors.accent
+                                      .withValues(alpha: 0.28 * (1 - t)),
+                                  width: 1.4,
+                                ),
+                              ),
+                              child: Center(
+                                child: Container(
+                                  width: 92,
+                                  height: 92,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Np4Colors.accentContainer,
+                                    border: Border.all(
+                                      color: Np4Colors.accent
+                                          .withValues(alpha: 0.35),
+                                      width: 1.2,
+                                    ),
+                                  ),
+                                  child: const Icon(Icons.shield_outlined,
+                                      size: 44, color: Np4Colors.accent),
+                                ),
+                              ),
+                            );
+                          },
                         ),
                       ),
                       const SizedBox(height: 24),

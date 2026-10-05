@@ -40,7 +40,8 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen>
+    with SingleTickerProviderStateMixin {
   final _inputCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   final _messages = <_ChatMessage>[];
@@ -50,10 +51,18 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription<Np4Incoming>? _sub;
   Timer? _peersTimer;
   bool _sending = false;
+  // Slow breathing on the empty-state badge.
+  late final AnimationController _emptyFx = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2400),
+  );
+  late final Animation<double> _emptyPulse = Tween(begin: 0.0, end: 1.0)
+      .animate(CurvedAnimation(parent: _emptyFx, curve: Curves.easeInOut));
 
   @override
   void initState() {
     super.initState();
+    _emptyFx.repeat(reverse: true);
     _sub = widget.client.messages.listen(_onIncoming, onError: (Object e) {
       _toast('接收异常：$e');
     });
@@ -92,6 +101,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _emptyFx.dispose();
     _peersTimer?.cancel();
     _sub?.cancel();
     _inputCtrl.dispose();
@@ -148,6 +158,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _sending = true);
     try {
       await widget.client.send(dest, text);
+      unawaited(HapticFeedback.mediumImpact());
       setState(() {
         _messages.add(_ChatMessage(
           sender: 'me',
@@ -263,11 +274,14 @@ class _ChatScreenState extends State<ChatScreen> {
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: TweenAnimationBuilder<double>(
-        tween: Tween(begin: 0.6, end: 1),
-        duration: const Duration(milliseconds: 160),
+        tween: Tween(begin: 0, end: 1),
+        duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
-        builder: (ctx, opacity, child) =>
-            Opacity(opacity: opacity, child: child),
+        builder: (ctx, t, child) => Opacity(
+          opacity: t.clamp(0, 1),
+          child: Transform.translate(
+              offset: Offset(0, 10 * (1 - t)), child: child),
+        ),
         child: Container(
           margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 14),
           padding: const EdgeInsets.fromLTRB(14, 9, 14, 7),
@@ -275,6 +289,13 @@ class _ChatScreenState extends State<ChatScreen> {
               maxWidth: MediaQuery.of(context).size.width * 0.78),
           decoration: BoxDecoration(
             color: mine ? Np4Colors.accentContainer : Np4Colors.surfaceHigh,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
             border: Border.all(
               color: mine
                   ? Np4Colors.accent.withValues(alpha: 0.28)
@@ -340,16 +361,24 @@ class _ChatScreenState extends State<ChatScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Np4Colors.surface,
-              border: Border.all(color: Np4Colors.border),
-            ),
-            child: const Icon(Icons.forum_outlined,
-                size: 30, color: Np4Colors.textFaint),
+          AnimatedBuilder(
+            animation: _emptyPulse,
+            builder: (ctx, _) {
+              final t = _emptyPulse.value;
+              return Container(
+                width: 72 + 8 * t,
+                height: 72 + 8 * t,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Np4Colors.surface,
+                  border: Border.all(
+                    color: Np4Colors.accent.withValues(alpha: 0.15 + 0.2 * t),
+                  ),
+                ),
+                child: const Icon(Icons.forum_outlined,
+                    size: 30, color: Np4Colors.textFaint),
+              );
+            },
           ),
           const SizedBox(height: 16),
           const Text('还没有消息',
