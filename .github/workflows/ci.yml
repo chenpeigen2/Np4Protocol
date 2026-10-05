@@ -16,8 +16,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
+      - name: apt deps (none today, placeholder for future cgo needs)
+        run: echo "go job uses no system packages"
       - name: Vet
         run: go vet ./...
       - name: Race — light packages
@@ -64,6 +66,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # Headless Linux needs the GL/EGL system libraries for PyQt6.QtWidgets.
+      - name: apt deps for Qt
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libegl1
       - run: pip install PyQt6
       - run: python -m compileall -q .
       - name: Import smoke (offscreen)
