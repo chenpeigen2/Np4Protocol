@@ -345,6 +345,22 @@ class ConnectPage(QWidget):
         QMessageBox.critical(self, "连接失败", message)
 
 
+class SendTextEdit(QTextEdit):
+    """QTextEdit that honors the placeholder's promise: Ctrl+Enter sends."""
+
+    send_requested = pyqtSignal()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        ctrl = event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        if ctrl and event.key() in (
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+        ):
+            self.send_requested.emit()
+            return
+        super().keyPressEvent(event)
+
+
 class Bubble(QFrame):
     """One chat message: attribution line, content, timestamp."""
 
@@ -451,7 +467,8 @@ class ChatPage(QWidget):
         footer_layout.addLayout(dest_row)
 
         input_row = QHBoxLayout()
-        self.input = QTextEdit()
+        self.input = SendTextEdit()
+        self.input.send_requested.connect(self._emit_send)
         self.input.setFixedHeight(52)
         self.input.setPlaceholderText("输入消息… (Ctrl+Enter 发送)")
         input_row.addWidget(self.input, 1)

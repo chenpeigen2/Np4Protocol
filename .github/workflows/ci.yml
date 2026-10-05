@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go:
+    name: Go — vet, race, np4, fuzz seeds
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go/go.sum
+      - name: Vet
+        run: go vet ./...
+      - name: Race — light packages
+        # TestMDNSDiscovery is environment-flaky on CI runners (mDNS).
+        run: >-
+          go test -race -count=1
+          -skip 'TestMDNSDiscovery'
+          ./pkg/identity/ ./pkg/auth/ ./pkg/cell/ ./pkg/onion/
+          ./pkg/mix/ ./pkg/message/ ./pkg/pathsel/ ./pkg/bridge/
+          ./pkg/p2p/ ./cmd/bootstrap/
+      - name: np4 — full suite
+        run: go test -count=1 ./pkg/np4/
+      - name: Fuzz — seed corpora
+        run: >-
+          go test -count=1 -run 'Fuzz'
+          ./pkg/cell/ ./pkg/onion/ ./pkg/pathsel/ ./pkg/auth/
+      - name: Build
+        run: go build ./...
+
+  flutter:
+    name: Flutter — analyze, test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/flutter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+  pyqt:
+    name: PyQt — compile + import smoke
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/pyqt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install PyQt6
+      - run: python -m compileall -q .
+      - name: Import smoke (offscreen)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -c "import main; print('UI module imports clean')"
