@@ -601,7 +601,17 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
+def _ui_excepthook(exc_type, exc, tb) -> None:
+    """PyQt6 calls qFatal (abort) when a slot raises an unhandled exception —
+    one bad handler would take the whole app down. Replace the hook so the
+    traceback is printed and the app keeps running instead."""
+    import traceback
+
+    traceback.print_exception(exc_type, exc, tb, file=sys.stderr)
+
+
 def main() -> int:
+    sys.excepthook = _ui_excepthook
     app = QApplication(sys.argv)
     _dark_palette(app)
     app.setStyleSheet(GLOBAL_QSS)
