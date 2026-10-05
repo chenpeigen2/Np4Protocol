@@ -41,7 +41,7 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final _inputCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   final _messages = <_ChatMessage>[];
@@ -58,6 +58,11 @@ class _ChatScreenState extends State<ChatScreen>
   );
   late final Animation<double> _emptyPulse = Tween(begin: 0.0, end: 1.0)
       .animate(CurvedAnimation(parent: _emptyFx, curve: Curves.easeInOut));
+  // "Launch" micro-interaction on the send button after a send lands.
+  late final AnimationController _sendFx = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 340),
+  );
 
   @override
   void initState() {
@@ -68,8 +73,8 @@ class _ChatScreenState extends State<ChatScreen>
     });
     _refreshPeers();
     // Peer liveness: discovery records churn as nodes join and leave.
-    _peersTimer = Timer.periodic(
-        const Duration(seconds: 30), (_) => _refreshPeers());
+    _peersTimer =
+        Timer.periodic(const Duration(seconds: 30), (_) => _refreshPeers());
   }
 
   Future<void> _refreshPeers() async {
@@ -101,6 +106,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void dispose() {
+    _sendFx.dispose();
     _emptyFx.dispose();
     _peersTimer?.cancel();
     _sub?.cancel();
@@ -159,6 +165,7 @@ class _ChatScreenState extends State<ChatScreen>
     try {
       await widget.client.send(dest, text);
       unawaited(HapticFeedback.mediumImpact());
+      _sendFx.forward(from: 0);
       setState(() {
         _messages.add(_ChatMessage(
           sender: 'me',
@@ -190,7 +197,8 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _toast(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   // -- presentation ---------------------------------------------------------
@@ -237,27 +245,37 @@ class _ChatScreenState extends State<ChatScreen>
                   itemCount: _peers.length,
                   itemBuilder: (ctx, i) {
                     final p = _peers[i];
-                    return ListTile(
-                      leading: CircleAvatar(
-                        radius: 18,
-                        backgroundColor: Np4Colors.accentContainer,
-                        child: Text(p.peerId.substring(8, 9).toUpperCase(),
-                            style: const TextStyle(
-                                color: Np4Colors.accent,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600)),
+                    return TweenAnimationBuilder<double>(
+                      tween: Tween(begin: 0, end: 1),
+                      duration: Duration(milliseconds: 240 + i * 45),
+                      curve: Curves.easeOutCubic,
+                      builder: (ctx, t, child) => Opacity(
+                        opacity: t.clamp(0, 1),
+                        child: Transform.translate(
+                            offset: Offset(14 * (1 - t), 0), child: child),
                       ),
-                      title: Text(
-                        '${p.peerId.substring(0, 16)}…',
-                        style: const TextStyle(
-                            color: Np4Colors.textPrimary, fontSize: 14),
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          radius: 18,
+                          backgroundColor: Np4Colors.accentContainer,
+                          child: Text(p.peerId.substring(8, 9).toUpperCase(),
+                              style: const TextStyle(
+                                  color: Np4Colors.accent,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600)),
+                        ),
+                        title: Text(
+                          '${p.peerId.substring(0, 16)}…',
+                          style: const TextStyle(
+                              color: Np4Colors.textPrimary, fontSize: 14),
+                        ),
+                        trailing: const Icon(Icons.chevron_right,
+                            color: Np4Colors.textFaint),
+                        onTap: () {
+                          Navigator.of(sheetCtx).pop();
+                          setState(() => _destCtrl.text = p.peerId);
+                        },
                       ),
-                      trailing: const Icon(Icons.chevron_right,
-                          color: Np4Colors.textFaint),
-                      onTap: () {
-                        Navigator.of(sheetCtx).pop();
-                        setState(() => _destCtrl.text = p.peerId);
-                      },
                     );
                   },
                 ),
@@ -280,7 +298,9 @@ class _ChatScreenState extends State<ChatScreen>
         builder: (ctx, t, child) => Opacity(
           opacity: t.clamp(0, 1),
           child: Transform.translate(
-              offset: Offset(0, 10 * (1 - t)), child: child),
+            offset: Offset(0, 10 * (1 - t)),
+            child: Transform.scale(scale: 0.96 + 0.04 * t, child: child),
+          ),
         ),
         child: Container(
           margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 14),
@@ -336,17 +356,15 @@ class _ChatScreenState extends State<ChatScreen>
               Text(
                 m.text,
                 style: const TextStyle(
-                    color: Np4Colors.textPrimary,
-                    fontSize: 15,
-                    height: 1.45),
+                    color: Np4Colors.textPrimary, fontSize: 15, height: 1.45),
               ),
               const SizedBox(height: 3),
               Align(
                 alignment: Alignment.centerRight,
                 child: Text(
                   '${m.time.hour.toString().padLeft(2, '0')}:${m.time.minute.toString().padLeft(2, '0')}',
-                  style: const TextStyle(
-                      color: Np4Colors.textFaint, fontSize: 10),
+                  style:
+                      const TextStyle(color: Np4Colors.textFaint, fontSize: 10),
                 ),
               ),
             ],
@@ -485,17 +503,35 @@ class _ChatScreenState extends State<ChatScreen>
               ),
               const SizedBox(width: 8),
               Material(
-                color:
-                    _sending ? Np4Colors.surfaceHigh : Np4Colors.accent,
+                color: _sending ? Np4Colors.surfaceHigh : Np4Colors.accent,
                 borderRadius: BorderRadius.circular(24),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(24),
                   onTap: _sending ? null : _send,
-                  child: const SizedBox(
+                  child: SizedBox(
                     width: 46,
                     height: 46,
-                    child: Icon(Icons.arrow_upward_rounded,
-                        color: Np4Colors.onAccent, size: 24),
+                    child: AnimatedBuilder(
+                      animation: _sendFx,
+                      builder: (ctx, _) {
+                        final t = _sendFx.value;
+                        // Two phases: the arrow departs upward, then
+                        // re-enters from below — a quiet "launched" beat.
+                        final dy = t < 0.5
+                            ? -22 * Curves.easeIn.transform(t * 2)
+                            : 22 *
+                                (1 - Curves.easeOut.transform((t - 0.5) * 2));
+                        final opacity = t < 0.5 ? 1 - t * 2 : (t - 0.5) * 2;
+                        return Transform.translate(
+                          offset: Offset(0, dy),
+                          child: Opacity(
+                            opacity: opacity.clamp(0, 1),
+                            child: const Icon(Icons.arrow_upward_rounded,
+                                color: Np4Colors.onAccent, size: 24),
+                          ),
+                        );
+                      },
+                    ),
                   ),
                 ),
               ),
@@ -522,7 +558,8 @@ class _ChatScreenState extends State<ChatScreen>
                   height: 6,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: _relayCount == 0 ? Np4Colors.danger : Np4Colors.accent,
+                    color:
+                        _relayCount == 0 ? Np4Colors.danger : Np4Colors.accent,
                   ),
                 ),
                 const SizedBox(width: 6),

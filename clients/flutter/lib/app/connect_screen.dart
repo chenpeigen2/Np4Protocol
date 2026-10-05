@@ -5,6 +5,7 @@ import '../bridge/np4_bridge.dart';
 import '../bridge/np4_ffi.dart';
 import 'chat_screen.dart';
 import 'theme.dart';
+import 'transitions.dart';
 
 /// Build-time demo/dev hooks (flutter run --dart-define=...):
 ///   NP4_BOOTSTRAP=multiaddr  prefills the bootstrap field
@@ -24,12 +25,14 @@ class ConnectScreen extends StatefulWidget {
 }
 
 class _ConnectScreenState extends State<ConnectScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final _bootstrapCtrl = TextEditingController();
   final _hopsCtrl = TextEditingController(text: '1');
   bool _connecting = false;
   String _status = '';
-  // One controller drives the shield pulse (below) on repeat.
+
+  // One ticker, three clocks: a repeating shield pulse, a one-shot entrance
+  // for the staggered choreography, and a slow ambient glow drift.
   late final AnimationController _pulseFx = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 2200),
@@ -37,11 +40,24 @@ class _ConnectScreenState extends State<ConnectScreen>
   late final Animation<double> _pulse = Tween(begin: 0.0, end: 1.0).animate(
     CurvedAnimation(parent: _pulseFx, curve: Curves.easeInOut),
   );
+  late final AnimationController _enterFx = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1150),
+  );
+  late final AnimationController _glowFx = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 9000),
+  );
+  late final Animation<double> _glow = Tween(begin: 0.0, end: 1.0).animate(
+    CurvedAnimation(parent: _glowFx, curve: Curves.easeInOut),
+  );
 
   @override
   void initState() {
     super.initState();
     _pulseFx.repeat(reverse: true);
+    _glowFx.repeat(reverse: true);
+    _enterFx.forward();
     if (_kEnvBootstrap.isNotEmpty) {
       _bootstrapCtrl.text = _kEnvBootstrap;
     }
@@ -52,6 +68,8 @@ class _ConnectScreenState extends State<ConnectScreen>
 
   @override
   void dispose() {
+    _enterFx.dispose();
+    _glowFx.dispose();
     _pulseFx.dispose();
     _bootstrapCtrl.dispose();
     _hopsCtrl.dispose();
@@ -82,7 +100,7 @@ class _ConnectScreenState extends State<ConnectScreen>
       // publish_keys already ran inside connect(); give the DHT a moment and
       // hand off. Cold-start: path selection retries up to 25s on first send.
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(MaterialPageRoute(
+      Navigator.of(context).pushReplacement(FadeSlideRoute(
         builder: (_) => ChatScreen(client: client, bootstrap: bootstrap),
       ));
     } catch (e) {
@@ -96,213 +114,243 @@ class _ConnectScreenState extends State<ConnectScreen>
   }
 
   void _showError(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        // A single soft glow at the top: the only ornament on the screen.
-        decoration: const BoxDecoration(
+        // A single soft glow at the top — it drifts, slowly, so the screen
+        // never feels frozen. The only ornament here.
+        decoration: BoxDecoration(
           gradient: RadialGradient(
-            center: Alignment(0, -1.2),
+            center: Alignment.lerp(const Alignment(-0.9, -1.3),
+                const Alignment(0.7, -1.1), _glow.value)!,
             radius: 1.4,
-            colors: [Color(0x1434D399), Colors.transparent],
-            stops: [0, 0.55],
+            colors: const [Color(0x1434D399), Colors.transparent],
+            stops: const [0, 0.55],
           ),
         ),
         child: SafeArea(
           child: LayoutBuilder(
             builder: (ctx, constraints) => SingleChildScrollView(
               child: ConstrainedBox(
-                constraints:
-                    BoxConstraints(minHeight: constraints.maxHeight),
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
                 child: Center(
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 480),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
                       child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const SizedBox(height: 24),
-                      Center(
-                        child: AnimatedBuilder(
-                          animation: _pulse,
-                          builder: (ctx, _) {
-                            final t = _pulse.value;
-                            return Container(
-                              width: 92 + 26 * t,
-                              height: 92 + 26 * t,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Np4Colors.accent
-                                      .withValues(alpha: 0.28 * (1 - t)),
-                                  width: 1.4,
-                                ),
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const SizedBox(height: 24),
+                          StaggerIn(
+                            fx: _enterFx,
+                            interval: const Interval(0, 0.35,
+                                curve: Curves.easeOutCubic),
+                            child: Center(
+                              child: AnimatedBuilder(
+                                animation: _pulse,
+                                builder: (ctx, _) {
+                                  final t = _pulse.value;
+                                  return Container(
+                                    width: 92 + 26 * t,
+                                    height: 92 + 26 * t,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: Np4Colors.accent.withValues(
+                                            alpha: 0.28 * (1 - t)),
+                                        width: 1.4,
+                                      ),
+                                    ),
+                                    child: Center(
+                                      child: Container(
+                                        width: 92,
+                                        height: 92,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: Np4Colors.accentContainer,
+                                          border: Border.all(
+                                            color: Np4Colors.accent
+                                                .withValues(alpha: 0.35),
+                                            width: 1.2,
+                                          ),
+                                        ),
+                                        child: const Icon(Icons.shield_outlined,
+                                            size: 44, color: Np4Colors.accent),
+                                      ),
+                                    ),
+                                  );
+                                },
                               ),
-                              child: Center(
-                                child: Container(
-                                  width: 92,
-                                  height: 92,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: Np4Colors.accentContainer,
-                                    border: Border.all(
-                                      color: Np4Colors.accent
-                                          .withValues(alpha: 0.35),
-                                      width: 1.2,
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          StaggerIn(
+                            fx: _enterFx,
+                            interval: const Interval(0.18, 0.5,
+                                curve: Curves.easeOutCubic),
+                            child: const Text(
+                              'NP4 匿名聊天',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Np4Colors.textPrimary,
+                                fontSize: 26,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.3,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          StaggerIn(
+                            fx: _enterFx,
+                            interval: const Interval(0.28, 0.6,
+                                curve: Curves.easeOutCubic),
+                            child: const Text(
+                              '定长 cell · 洋葱路由 · 批量混洗\n对方看到的只有一个词：anonymous',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Np4Colors.textMuted,
+                                fontSize: 14,
+                                height: 1.6,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 32),
+                          StaggerIn(
+                            fx: _enterFx,
+                            interval: const Interval(0.4, 0.85,
+                                curve: Curves.easeOutCubic),
+                            child: Container(
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: Np4Colors.surface,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: Np4Colors.border),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const _FieldLabel('Bootstrap 节点'),
+                                  TextField(
+                                    controller: _bootstrapCtrl,
+                                    enabled: !_connecting,
+                                    style: const TextStyle(
+                                        fontSize: 13,
+                                        color: Np4Colors.textPrimary),
+                                    decoration: const InputDecoration(
+                                      hintText:
+                                          '/ip4/203.0.113.7/tcp/4000/p2p/12D3…',
+                                      prefixIcon: Icon(Icons.hub_outlined,
+                                          size: 20,
+                                          color: Np4Colors.textFaint),
+                                      prefixIconConstraints: BoxConstraints(
+                                          minWidth: 40, minHeight: 20),
                                     ),
                                   ),
-                                  child: const Icon(Icons.shield_outlined,
-                                      size: 44, color: Np4Colors.accent),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      const Text(
-                        'NP4 匿名聊天',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Np4Colors.textPrimary,
-                          fontSize: 26,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.3,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      const Text(
-                        '定长 cell · 洋葱路由 · 批量混洗\n对方看到的只有一个词：anonymous',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Np4Colors.textMuted,
-                          fontSize: 14,
-                          height: 1.6,
-                        ),
-                      ),
-                      const SizedBox(height: 32),
-                      Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: Np4Colors.surface,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Np4Colors.border),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const _FieldLabel('Bootstrap 节点'),
-                            TextField(
-                              controller: _bootstrapCtrl,
-                              enabled: !_connecting,
-                              style: const TextStyle(
-                                  fontSize: 13, color: Np4Colors.textPrimary),
-                              decoration: const InputDecoration(
-                                hintText:
-                                    '/ip4/203.0.113.7/tcp/4000/p2p/12D3…',
-                                prefixIcon: Icon(Icons.hub_outlined,
-                                    size: 20, color: Np4Colors.textFaint),
-                                prefixIconConstraints: BoxConstraints(
-                                    minWidth: 40, minHeight: 20),
-                              ),
-                            ),
-                            const Padding(
-                              padding: EdgeInsets.only(left: 4, top: 6),
-                              child: Text(
-                                '服务器上 ./bootstrap start 输出的地址；云服务器把内网 IP 换成公网 IP',
-                                style: TextStyle(
-                                    color: Np4Colors.textFaint,
-                                    fontSize: 11.5),
-                              ),
-                            ),
-                            const SizedBox(height: 18),
-                            const _FieldLabel('洋葱跳数'),
-                            TextField(
-                              controller: _hopsCtrl,
-                              enabled: !_connecting,
-                              keyboardType: TextInputType.number,
-                              style:
-                                  const TextStyle(color: Np4Colors.textPrimary),
-                              decoration: const InputDecoration(
-                                prefixIcon: Icon(Icons.route_outlined,
-                                    size: 20, color: Np4Colors.textFaint),
-                                prefixIconConstraints: BoxConstraints(
-                                    minWidth: 40, minHeight: 20),
-                              ),
-                            ),
-                            const Padding(
-                              padding: EdgeInsets.only(left: 4, top: 6),
-                              child: Text(
-                                '需 ≤ 在线 relay 数；bootstrap 兼任 relay 的单服务器部署用 1',
-                                style: TextStyle(
-                                    color: Np4Colors.textFaint,
-                                    fontSize: 11.5),
-                              ),
-                            ),
-                            const SizedBox(height: 22),
-                            FilledButton(
-                              onPressed: _connecting ? null : _connect,
-                              child: _connecting
-                                  ? const SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Np4Colors.onAccent),
-                                    )
-                                  : const Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text('进入匿名网络'),
-                                        SizedBox(width: 8),
-                                        Icon(Icons.arrow_forward_rounded,
-                                            size: 18),
-                                      ],
+                                  const Padding(
+                                    padding: EdgeInsets.only(left: 4, top: 6),
+                                    child: Text(
+                                      '服务器上 ./bootstrap start 输出的地址；云服务器把内网 IP 换成公网 IP',
+                                      style: TextStyle(
+                                          color: Np4Colors.textFaint,
+                                          fontSize: 11.5),
                                     ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (_status.isNotEmpty) ...[
-                        const SizedBox(height: 16),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const SizedBox(
-                              width: 12,
-                              height: 12,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 1.6, color: Np4Colors.accent),
-                            ),
-                            const SizedBox(width: 8),
-                            Flexible(
-                              child: Text(
-                                _status,
-                                style: const TextStyle(
-                                    color: Np4Colors.textMuted,
-                                    fontSize: 12.5),
+                                  ),
+                                  const SizedBox(height: 18),
+                                  const _FieldLabel('洋葱跳数'),
+                                  TextField(
+                                    controller: _hopsCtrl,
+                                    enabled: !_connecting,
+                                    keyboardType: TextInputType.number,
+                                    style: const TextStyle(
+                                        color: Np4Colors.textPrimary),
+                                    decoration: const InputDecoration(
+                                      prefixIcon: Icon(Icons.route_outlined,
+                                          size: 20, color: Np4Colors.textFaint),
+                                      prefixIconConstraints: BoxConstraints(
+                                          minWidth: 40, minHeight: 20),
+                                    ),
+                                  ),
+                                  const Padding(
+                                    padding: EdgeInsets.only(left: 4, top: 6),
+                                    child: Text(
+                                      '需 ≤ 在线 relay 数；bootstrap 兼任 relay 的单服务器部署用 1',
+                                      style: TextStyle(
+                                          color: Np4Colors.textFaint,
+                                          fontSize: 11.5),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 22),
+                                  FilledButton(
+                                    onPressed: _connecting ? null : _connect,
+                                    child: _connecting
+                                        ? const SizedBox(
+                                            width: 20,
+                                            height: 20,
+                                            child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: Np4Colors.onAccent),
+                                          )
+                                        : const Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text('进入匿名网络'),
+                                              SizedBox(width: 8),
+                                              Icon(Icons.arrow_forward_rounded,
+                                                  size: 18),
+                                            ],
+                                          ),
+                                  ),
+                                ],
                               ),
                             ),
+                          ),
+                          if (_status.isNotEmpty) ...[
+                            const SizedBox(height: 16),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const SizedBox(
+                                  width: 12,
+                                  height: 12,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 1.6,
+                                      color: Np4Colors.accent),
+                                ),
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    _status,
+                                    style: const TextStyle(
+                                        color: Np4Colors.textMuted,
+                                        fontSize: 12.5),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ],
-                        ),
-                      ],
-                      const SizedBox(height: 28),
-                      const Text(
-                        '消息为尽力送达，对方离线即丢失；\n"已发送" 仅表示已进入匿名队列。',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                            color: Np4Colors.textFaint,
-                            fontSize: 12,
-                            height: 1.6),
-                      ),
-                      const SizedBox(height: 16),
-                    ],
+                          const SizedBox(height: 28),
+                          StaggerIn(
+                            fx: _enterFx,
+                            interval: const Interval(0.55, 0.95,
+                                curve: Curves.easeOutCubic),
+                            child: const Text(
+                              '消息为尽力送达，对方离线即丢失；\n"已发送" 仅表示已进入匿名队列。',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                  color: Np4Colors.textFaint,
+                                  fontSize: 12,
+                                  height: 1.6),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
                       ),
                     ),
                   ),
