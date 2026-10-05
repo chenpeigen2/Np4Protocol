@@ -27,8 +27,12 @@ if [ ${#targets[@]} -eq 0 ]; then
   targets=(android macos windows linux)
 fi
 
+# -s -w strips symbol tables and DWARF: the bridge ships to end users, not
+# debuggers (60MB -> ~20MB per artifact).
+STRIP="-ldflags=-s -w"
+
 run_go() {
-  (cd "$GO_DIR" && env "$@" go build -buildmode=c-shared -o "$out" "$BRIDGE_PKG")
+  (cd "$GO_DIR" && env "$@" go build "$STRIP" -buildmode=c-shared -o "$out" "$BRIDGE_PKG")
 }
 
 build_android() {
@@ -54,7 +58,7 @@ build_android() {
     # -checklinkname=0: go-libp2p's anet uses //go:linkname on net.zoneCache,
     # which Go 1.23+ rejects by default (wlynxg/anet#how-to-build).
     (cd "$GO_DIR" && env GOOS=android GOARCH="${abi[1]}" CGO_ENABLED=1 \
-      CC="$toolchain/${abi[2]}" go build -ldflags="-checklinkname=0" -buildmode=c-shared -o "$out" "$BRIDGE_PKG")
+      CC="$toolchain/${abi[2]}" go build -ldflags="-s -w -checklinkname=0" -buildmode=c-shared -o "$out" "$BRIDGE_PKG")
   done
   echo "android OK: $JNI_LIBS/*/libnp4bridge.so"
 }
@@ -69,10 +73,10 @@ build_macos() {
 
   echo "macos: arm64"
   (cd "$GO_DIR" && env GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 \
-    go build -buildmode=c-shared -o "$tmp/lib-arm64.dylib" "$BRIDGE_PKG")
+    go build "$STRIP" -buildmode=c-shared -o "$tmp/lib-arm64.dylib" "$BRIDGE_PKG")
   echo "macos: x86_64 (cross)"
   (cd "$GO_DIR" && env GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 CC="clang -arch x86_64" \
-    go build -buildmode=c-shared -o "$tmp/lib-amd64.dylib" "$BRIDGE_PKG")
+    go build "$STRIP" -buildmode=c-shared -o "$tmp/lib-amd64.dylib" "$BRIDGE_PKG")
 
   lipo -create -output "$NATIVE_DIR/macos/libnp4bridge.dylib" \
     "$tmp/lib-arm64.dylib" "$tmp/lib-amd64.dylib"
@@ -88,11 +92,11 @@ build_windows() {
   if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
     echo "windows: x86_64 via mingw-w64"
     (cd "$GO_DIR" && env GOOS=windows GOARCH=amd64 CGO_ENABLED=1 \
-      CC=x86_64-w64-mingw32-gcc go build -buildmode=c-shared -o "$NATIVE_DIR/windows/np4bridge.dll" "$BRIDGE_PKG")
+      CC=x86_64-w64-mingw32-gcc go build "$STRIP" -buildmode=c-shared -o "$NATIVE_DIR/windows/np4bridge.dll" "$BRIDGE_PKG")
   elif command -v zig >/dev/null 2>&1; then
     echo "windows: x86_64 via zig cc"
     (cd "$GO_DIR" && env GOOS=windows GOARCH=amd64 CGO_ENABLED=1 \
-      CC="zig cc -target x86_64-windows-gnu" go build -buildmode=c-shared -o "$NATIVE_DIR/windows/np4bridge.dll" "$BRIDGE_PKG")
+      CC="zig cc -target x86_64-windows-gnu" go build "$STRIP" -buildmode=c-shared -o "$NATIVE_DIR/windows/np4bridge.dll" "$BRIDGE_PKG")
   else
     echo "skip windows: no mingw-w64 or zig (brew install mingw-w64 / zig)"; return 0
   fi
@@ -104,11 +108,11 @@ build_linux() {
   if [ "$(uname -s)" = "Linux" ]; then
     echo "linux: native $(uname -m)"
     (cd "$GO_DIR" && env CGO_ENABLED=1 \
-      go build -buildmode=c-shared -o "$NATIVE_DIR/linux/libnp4bridge.so" "$BRIDGE_PKG")
+      go build "$STRIP" -buildmode=c-shared -o "$NATIVE_DIR/linux/libnp4bridge.so" "$BRIDGE_PKG")
   elif command -v zig >/dev/null 2>&1; then
     echo "linux: cross via zig cc (x86_64)"
     (cd "$GO_DIR" && env GOOS=linux GOARCH=amd64 CGO_ENABLED=1 \
-      CC="zig cc -target x86_64-linux-gnu" go build -buildmode=c-shared -o "$NATIVE_DIR/linux/libnp4bridge.so" "$BRIDGE_PKG")
+      CC="zig cc -target x86_64-linux-gnu" go build "$STRIP" -buildmode=c-shared -o "$NATIVE_DIR/linux/libnp4bridge.so" "$BRIDGE_PKG")
   else
     echo "skip linux: build on Linux, or install zig for cross-compiling"; return 0
   fi

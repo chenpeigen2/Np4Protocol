@@ -4,10 +4,12 @@ import (
 	"context"
 	"embed"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/http"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -167,15 +169,27 @@ func startGinServer(node *np4.Node) {
 
 	// The address book: every mix-reachable node with the fields a client
 	// contact entry needs — peer_id, addrs, ecdh_pub, connected, is_relay.
+	// Each uncached call costs several DHT roundtrips; browser tabs poll
+	// every 5s, so a 2s server-side cache collapses concurrent viewers onto
+	// one lookup without visibly stale data.
+	var dirMu sync.Mutex
+	var dirCache []byte
+	var dirCacheAt time.Time
 	r.GET("/api/directory", func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
-		defer cancel()
-		dir, err := node.Directory(ctx)
-		if err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-			return
+		dirMu.Lock()
+		defer dirMu.Unlock()
+		if dirCache == nil || time.Since(dirCacheAt) > 2*time.Second {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+			dir, err := node.Directory(ctx)
+			cancel()
+			if err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+				return
+			}
+			dirCache, _ = json.Marshal(dir)
+			dirCacheAt = time.Now()
 		}
-		c.JSON(http.StatusOK, dir)
+		c.Data(http.StatusOK, "application/json", dirCache)
 	})
 
 	r.GET("/api/relays", func(c *gin.Context) {
