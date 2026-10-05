@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import sys
 from datetime import datetime
+from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -275,6 +277,11 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
+    # Unified NP4 brand icon (clients/tools/gen_icon.py) — window, taskbar
+    # and dock all inherit it.
+    icon_path = Path(__file__).resolve().parent / "assets" / "icon.png"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
     window = MainWindow()
     window.show()
     return app.exec()
