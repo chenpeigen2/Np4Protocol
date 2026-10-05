@@ -61,6 +61,19 @@ flutter run -d macos --dart-define=NP4_BOOTSTRAP=<multiaddr> --dart-define=NP4_A
 
 Android 的 `.so` 由 Gradle 自动打包（`jniLibs`）；macOS 经 `macos/Np4Bridge.podspec` vendored 进 `.app/Contents/Frameworks`（setup.sh 自动写 podspec + 补 Podfile + 开沙箱网络 entitlements）；Windows/Linux 由 setup.sh 往各自 CMakeLists 追加拷贝/安装规则。产物不入库（`.gitignore`），CI 每次构建。
 
+所有构建均带 `-ldflags="-s -w"`（剥符号，dylib 60.5→52MB）。
+
+### 品牌图标
+
+安卓全套启动图标（传统 + API 26+ 自适应）由 `flutter_launcher_icons` 从
+`assets/icon-1024.png` 生成；母图来自 `clients/tools/gen_icon.py`
+（Pillow 绘制：翡翠盾牌 + 洋葱层弧线 + 深空底，改参数重跑即可整套更新）。
+
+## CI
+
+`.github/workflows/ci.yml` 在 push/PR 上自动执行 `flutter analyze` +
+`flutter test`（与 Go/PyQt 矩阵并行）。
+
 ## 已知边界
 
 - **iOS 暂不支持**：桥层无需改动即可扩展（Go 侧 `-buildmode=c-archive` + xcframework + vendored pod），待排期。

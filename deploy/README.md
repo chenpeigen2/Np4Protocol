@@ -21,6 +21,7 @@ sudo ./deploy.sh            # 公网 IP 自动探测；也可显式指定：sudo
 | 端口 | 仅 `4000/tcp` 公开（DHT + relay）；仪表盘 `8080` 只绑 `127.0.0.1`（`--web-host` 可改）——它无鉴权且 CORS 全开，绝不暴露公网，用 SSH 隧道访问 |
 | 准入 | `--allowlist <file>`：每行一个 peer ID（# 注释），热加载（5s 轮询）。名单外节点在连接层即被拒（进不了 DHT）；**不配置 = 开放准入**。bootstrap 自身 ID 永远豁免 |
 | 限速 | relay 入口 per-peer 令牌桶：默认 10 cell/s、burst 50（`--relay-rate` 可调，0=不限），防单客户端灌满 relay 队列 |
+| cover traffic | 节点 Poisson 注入 dummy cell：默认 0.5 cell/s（`--dummy-rate` 可调，0=关闭），拉平活跃度指纹 |
 | 健康检查 | `wget /api/status`，compose 依赖它决定重启；deploy.sh 等到 healthy 才打印地址 |
 | 重启策略 | `unless-stopped` + docker 开机自启；日志 10MB×3 轮转 |
 | 防火墙 | ufw active 时只放行 4000/tcp |

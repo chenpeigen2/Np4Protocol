@@ -27,12 +27,20 @@ cd go && go build -o bin/bootstrap ./cmd/bootstrap/ && go build -o bin/np4cli ./
 
 ```bash
 go build ./... && go vet ./...
-go test -race ./pkg/cell/ ./pkg/onion/ ./pkg/mix/ ./pkg/message/ ./pkg/pathsel/ ./pkg/identity/ ./pkg/bridge/
-go test ./pkg/np4/            # ~100s，禁止加 -race（不收敛），放后台跑
+go test -race -skip 'TestMDNSDiscovery' ./pkg/identity/ ./pkg/auth/ ./pkg/cell/ \
+  ./pkg/onion/ ./pkg/mix/ ./pkg/message/ ./pkg/pathsel/ ./pkg/bridge/ \
+  ./pkg/p2p/ ./cmd/bootstrap/
+go test ./pkg/np4/            # ~180s 重量级集成测试，放后台跑
 ```
 
-触碰 `cell/`、`onion/`、`wire` 的解码路径时，另跑对应 fuzz 目标各 ≥30s：
-`go test -fuzz FuzzWireUnwrap -fuzztime 30s ./pkg/onion/` 等。
+触碰 `cell/`、`onion/`、`wire`、`pathsel` 解析、`auth` 的路径时，另跑对应
+fuzz 目标各 ≥15s：`go test -fuzz FuzzWireUnwrap -fuzztime 15s ./pkg/onion/`、
+`go test -fuzz FuzzParseRotationRecord -fuzztime 15s ./pkg/pathsel/`、
+`go test -fuzz FuzzTagVerify -fuzztime 15s ./pkg/auth/` 等。
+
+CI（`.github/workflows/ci.yml`）在每个 push/PR 上自动执行同一矩阵
+（Go 三段 + Flutter analyze/test + PyQt 编译冒烟）——本地跳过的步骤
+CI 会补跑。改 CI 配置后观察 GitHub Actions 首跑再收工。
 
 ### 3. 桥 ABI 纪律
 
@@ -57,8 +65,10 @@ commit 后立即 `git push origin main`；工作区与远端任何时刻保持�
 
 ## 测试环境须知（踩过的坑）
 
-- **`-race` 只用于轻量包**；`pkg/np4`、`pkg/p2p` 的重量级 libp2p 集成测试加
-  `-race` 不收敛（>15min）。
+- **`-race` 的边界（2026-10-05 更新）**：全部轻量包 + `pkg/p2p` +
+  `cmd/bootstrap` 现在都跑 `-race`（CI 同步）；`pkg/np4` 全量加 `-race`
+  约 3.5 分钟且**当前零竞争**（第九轮审计 206s 通过）——重大并发改动后
+  值得本地跑一次全量 race 审计。
 - **`TestMDNSDiscovery` 在 macOS 偶发超时**（组播环境抖动）：失败先单独重跑
   再排查，不要当真回归。
 - **Android 构建必须加 `-ldflags="-checklinkname=0"`**：libp2p 的
@@ -69,6 +79,16 @@ commit 后立即 `git push origin main`；工作区与远端任何时刻保持�
   该文件注释。
 - **Flutter 桌面构建无法从 macOS 交叉编译**；Windows/Linux 应用层测试需在
   对应系统或 CI 上做。
+- **演示/开发环境身份放 `~/.np4demo`，不要放 `/tmp`**：macOS 会清理
+  /tmp，身份文件丢失 = Peer ID 变化 = 全部客户端地址作废（2026-10-05 实录）。
+- **PyQt 运行用 `clients/pyqt/.venv/bin/python`**（系统 python3 无 PyQt6）；
+  `main.py` 已装 excepthook——slot 异常打 traceback 不再 qFatal 崩进程
+  （此前两次窗口崩溃正是 PyQt slot 未捕获异常 abort 所致）。
+- **QListWidget 的 item widget 上禁用 QGraphicsOpacityEffect**（与 viewport
+  painter 冲突，刷 QPainter not active）：入场动效用
+  `_expand_into_list`（纯几何高度展开）。
+- **UI 验收截图**：PyQt 用 `NP4_SCREENSHOT=<path>`（配
+  `NP4_SCREENSHOT_DELAY_MS`），模拟器用 `adb exec-out screencap`。
 - **国内网络镜像**：Go 用 GOPROXY=goproxy.cn；Flutter SDK/pub 用
   flutter-io.cn；gradle 用阿里云/腾讯镜像（已焊入 clients/flutter 的
   gradle 配置与 deploy/Dockerfile 的 GOPROXY 参数）。

@@ -27,7 +27,8 @@ go test ./pkg/p2p/ -v
 go test ./pkg/np4/ -v -run TestNodeSendReceive
 
 # Build CLI tools
-go build -o bin/np4d ./cmd/np4d/
+go build -o bin/np4cli ./cmd/np4cli/
+go build -o bin/bootstrap ./cmd/bootstrap/
 go build -o bin/np4cli ./cmd/np4cli/
 
 # Regenerate protobuf code (requires protoc + protoc-gen-go)
@@ -58,10 +59,10 @@ Anonymous    →  mix/engine.go (batch shuffle with Fisher-Yates)
 P2P Network  →  p2p/host.go + stream.go + discovery.go (go-libp2p)
 ```
 
-libp2p provides transport (TCP), security (Noise: X25519 + ChaCha20-Poly1305), stream multiplexing (yamux), and peer discovery (mDNS) out of the box.
+libp2p provides transport (TCP), security (Noise: X25519 + ChaCha20-Poly1305), stream multiplexing (yamux), and peer discovery helpers out of the box.
 
 Supporting packages:
-- `p2p/` - libp2p Host wrapper, stream helpers (length-prefixed framing), mDNS discovery
+- `p2p/` - libp2p Host wrapper, stream helpers (length-prefixed framing), DHT rendezvous discovery, admission gating, bounded DHT record store
 - `message/` - Pub/sub message bus with async handler dispatch
 - `proto/` - Generated protobuf types (not yet used in runtime; app uses JSON-serialized `message.Message`)
 

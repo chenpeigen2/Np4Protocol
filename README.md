@@ -29,7 +29,7 @@
 │  加密层   │  X25519 + HKDF-SHA256 + ChaCha20 │
 ├──────────────────────────────────────────────┤
 │  传输层   │  libp2p TCP + Noise + yamux；    │
-│          │  DHT rendezvous + mDNS 发现      │
+│          │  DHT rendezvous 发现；准入门控    │
 └──────────────────────────────────────────────┘
 ```
 
@@ -46,9 +46,11 @@ go/            Go 协议栈（核心实现）
                   auth / p2p / np4 / bridge / proto
 clients/
   flutter/     Flutter 桌面 + Android 客户端（加载编译进 dylib/so 的原生协议栈）
-  pyqt/        PyQt6 客户端（QThread worker 隔离原生调用）
+  pyqt/        PyQt6 客户端（QThread worker 隔离原生调用；暗色 UI 与 Flutter 同款设计语言）
+  tools/       gen_icon.py——统一品牌图标生成器（Flutter/PyQt/面板三端共用）
 deploy/        Dockerfile + docker-compose 单服务器部署
 docs/          协议规范（protocol.md）与计划文档
+.github/       CI（Go 矩阵 + Flutter + PyQt，push/PR 自动执行）
 proto/         共享 proto/消息定义
 ```
 
@@ -96,18 +98,23 @@ GUI 客户端加载的是**编译进 dylib/dll/so 的 Go 协议栈**——修改
 clients/flutter/tool/build_native.sh   # Android 3 ABI + macOS dylib（Windows/Linux 有工具链时一并）
 ```
 
-桥 ABI 纪律：四个符号（`np4_create / np4_call / np4_stop / np4_free`）永不增减；加功能 = 加 JSON 字段。客户端 UI 测试不依赖原生库（Flutter 用 FakeTransport；PyQt 用演示钩子环境变量）。
+桥 ABI 纪律：四个符号（`np4_create / np4_call / np4_stop / np4_free`）永不增减；加功能 = 加 JSON 字段。客户端 UI 测试不依赖原生库（Flutter 用 FakeTransport；PyQt 用演示钩子环境变量）。两端均为统一品牌图标（`clients/tools/gen_icon.py` 生成）与同款暗色设计语言（翡翠强调 + 深空底）。PyQt 的 UI 验收可用 `NP4_SCREENSHOT=<path>` 自动截图。
 
 ## 测试
 
 ```bash
 cd go
 go build ./... && go vet ./...
-go test -race ./pkg/cell/ ./pkg/onion/ ./pkg/mix/ ./pkg/message/ ./pkg/pathsel/ ./pkg/identity/ ./pkg/bridge/
-go test ./pkg/np4/            # ~100s 重量级集成测试，禁止加 -race（不收敛）
+go test -race -skip 'TestMDNSDiscovery' ./pkg/identity/ ./pkg/auth/ ./pkg/cell/ \
+  ./pkg/onion/ ./pkg/mix/ ./pkg/message/ ./pkg/pathsel/ ./pkg/bridge/ \
+  ./pkg/p2p/ ./cmd/bootstrap/
+go test ./pkg/np4/            # ~180s 重量级集成测试（重大并发改动后可
+                              #  跑一次 go test -race ./pkg/np4/ 全量审计，约 3.5 分钟）
 ```
 
-注意：`pkg/np4`、`pkg/p2p` 的 libp2p 集成测试加 `-race` 不收敛；`TestMDNSDiscovery` 在 macOS 偶发超时（组播抖动，失败先单独重跑）；Android 构建必须加 `-ldflags="-checklinkname=0"`。
+整套矩阵由 CI（`.github/workflows/ci.yml`）在每个 push/PR 上自动执行。
+注意：`TestMDNSDiscovery` 在 macOS 偶发超时（组播抖动，失败先单独重跑）；
+Android 构建必须加 `-ldflags="-checklinkname=0"`（build_native.sh 已带）。
 
 ## 协议常量速查
 
@@ -119,8 +126,16 @@ go test ./pkg/np4/            # ~100s 重量级集成测试，禁止加 -race（
 | 入口 batch | 10 条 / 500 ms | 发送端 |
 | relay batch | 10 条 / 200 ms | 中间 relay |
 | replay 缓存 | 100k 条 LRU | ~3.2 MB |
-| `MaxInitialTTL` | 25 | 防无限循环 |
+| `MaxInitialTTL` | 25 | 防无限循环；入站 >25 即判伪造丢弃 |
 | 延迟预算 | ≈ 1.1 s | 最坏 500ms + 3×200ms |
+| cover traffic | 0.5 cell/s/节点 | Poisson；`--dummy-rate` 可调 |
+| onion 入口预算 | relay 10/s、客户端 100/s | per-peer 令牌桶 |
+| direct 入口预算 | 5 msg/s burst 20 | 无鉴权通道的节流 |
+| DHT 记录上限 | 100k 条 | 有界记录存储，满拒新 |
+
+安全审查备案（2026-10 九轮，commit `4edc7ed`…`b0e9d18`）：入口分配/速率
+上界、TTL 环路放大、provider 洪泛、DHT 存储无界、混洗随机源、allowlist
+失效模式、direct 协议加固——全部修复并带回归测试。
 
 错误码、key 记录格式（`/np4/ecdh/<base32(peerID)>`，validator 强制 ID 绑定防 DHT 毒化）、准入与限速语义等详见 [docs/protocol.md](docs/protocol.md)。
 

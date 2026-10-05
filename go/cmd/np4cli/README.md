@@ -66,10 +66,12 @@ Sent (mix) to 12D3KooW...
 
 终端 B 中：
 ```
-[14:32:01] anonymous: 你好，B
+[14:32:01] ✓ 12D3KooW...（A 的 Peer ID）: 你好，B
 ```
 
-注意显示的发送者是 `anonymous`——这是匿名性的体现。
+网络与 relay 只看得到 `anonymous`；接收端通过 sender-auth 标签归属到
+联系人并显示 `✓ 已验证`（无标签/标签不匹配则显示
+`⚠ ... (unverified)`，消息照常投递）。
 
 ## 子命令
 
@@ -89,7 +91,9 @@ Sent (mix) to 12D3KooW...
 | `--bootstrap` | 无 | Bootstrap 节点的 multiaddr（启用 DHT；**mix 模式必填**） |
 | `--hops` | `3` | 洋葱路径的中间 relay 数（需 ≤ 在线 relay 数；bootstrap 兼任 relay 时算一个） |
 | `--rendezvous` | `np4-network` | DHT rendezvous 字符串 |
-| `--identity` | `~/.np4/identity` | 持久身份文件 |
+| `--identity` | `~/.np4/identity` | 持久身份文件（配套 `.keys` 子密钥侧车） |
+| `--dummy-rate` | `0.5` | cover traffic 均值 cell/s（0=关闭） |
+| `--ingress-rate` | `100` | per-peer 洋葱入口令牌桶 cell/s（0=不限） |
 
 ## 语义与限制（重要）
 

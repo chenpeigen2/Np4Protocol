@@ -71,5 +71,18 @@ BOOT=/ip4/<公网IP>/tcp/4000/p2p/12D3KooW...
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--port` | `4000` | TCP 监听端口 |
-| `--identity` | `~/.np4/identity` | 持久身份文件 |
-| `--web` | `8080` | Web 仪表盘端口（0 关闭；`/api/status`、`/api/peers`、`/api/relays`） |
+| `--identity` | `~/.np4/identity` | 持久身份文件（**丢失 = Peer ID 变 = 全部客户端地址失效**；配套 `.keys` 子密钥侧车同样要备份） |
+| `--web` | `8080` | Web 仪表盘端口（0 关闭；`/api/status`、`/api/peers`、`/api/relays`、`/api/directory`） |
+| `--web-host` | `127.0.0.1` | 仪表盘绑定地址（无鉴权 + CORS 全开，别暴露公网） |
+| `--allowlist` | 无 | 准入名单文件：每行一个 peer ID，热加载（5s 轮询）；**不配置 = 开放准入**；名单外节点在连接层即被拒；文件损坏 fail-closed |
+| `--relay-rate` | `10` | per-peer 洋葱入口令牌桶（cell/s，burst 50，0=不限） |
+| `--dummy-rate` | `0.5` | cover traffic 均值 cell/s（0=关闭） |
+
+### API 端点
+
+| 端点 | 内容 |
+|---|---|
+| `/api/status` | 运行状态、peer ID、地址、uptime |
+| `/api/directory` | **通讯录**（2s 缓存）：`peer_id`/`addrs`/`ecdh_pub`/`connected`/`is_relay`，面板可视化 + 一键复制 |
+| `/api/peers` | 原始 libp2p 连接视图 |
+| `/api/relays` | 当前 relay 及其 X25519 子密钥 |

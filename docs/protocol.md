@@ -80,6 +80,30 @@ msg_id (16B) ‖ type (1B) ‖ tag (16B) ‖ content_len (2B, big-endian) ‖ co
 - **Allowlist 准入**（可选，单服务器部署）：bootstrap `--allowlist` 文件（每行一个 peer ID，热加载）。名单外节点在连接层即被 `ConnectionGater` 拒绝（无法加入 DHT——连接门是唯一密封闸点，记录校验挡不住节点本地自存记录）；validator 层同样拒绝名单外 `/np4/ecdh` 发布作纵深防御。**空/未配置 = 开放准入**（开发模式）。bootstrap 自身 ID 永远豁免。
 - **Relay 入口限速**：per-peer 令牌桶，默认 10 cell/s、burst 50（`--relay-rate` 可调，0=不限）。在洋葱流入口、任何密码学处理之前执行，防单客户端灌满 relay mix（容量 256、drop-oldest）挤占他人流量。
 
+## 入口与资源防护 **[impl]**
+
+九轮安全审查（2026-10）落地的防御，全部带回归测试：
+
+- **读取上界**：onion 流读取以 `2×WireSize` 为界——超长长度前缀在
+  4 字节头即被拒，永不按声明值分配内存（分配放大防护）。
+- **入站 TTL 上界**：入站包 `ttl > MaxInitialTTL(25)` 即判伪造丢弃
+  （合法发送端 ≤24 且逐跳递减），封死单包环路放大。
+- **发现候选上限**：rendezvous 遍历每调用最多 64 个候选（每个候选
+  一次 DHT 往返），provider 洪泛无法放大发现成本。
+- **有界记录存储**：ModeServer 节点的 DHT 记录存储上限 100k 条
+  （kad-dht 默认为无界内存 map，且 /kad 流绕过 onion 限速）；满时
+  拒绝新 key、更新放行。根因缓解仍是 allowlist 准入。
+- **入口预算**：relay 默认 10 cell/s（burst 50，`--relay-rate`），
+  客户端/np4cli 默认 100/s（burst 200，`--ingress-rate`），
+  direct 协议 5 msg/s（burst 20）——全部 per-peer 令牌桶。
+- **direct 协议加固**：严格 `DestID == 自身`（拒绝空目标广播注入）、
+  线路字段不信任（`Verified` 强制 false、消息按协议认可字段重建，
+  `SessionKey` 等遗留槽位永不透传）——direct 无鉴权，消息恒为
+  "未验证"徽标。
+- **失效模式**：allowlist 文件损坏/不可读时 **fail-closed**（仅
+  bootstrap 自身可用），热加载恢复后自动放开；侧车文件损坏降级为
+  全新子密钥窗口（不 brick 身份）。
+
 ## 洋葱层与 Wire 格式 **[must]**
 
 嵌套加密的固有性质：每层密文比内层大 ~65+hopID 字节，等长不可能在层内做。等长在 **wire 层**实现——每个链路上的包都是恒定尺寸：
@@ -142,6 +166,10 @@ v1 仅使用 `TypeAsync`（mix 送达）与 direct JSON 消息（`--insecure`）
 
 延迟预算：最坏 ≈ 500ms + 3×200ms ≈ 1.1s。
 
+混洗随机源：**无状态 crypto/rand**——每次 Fisher-Yates 交换直接从
+crypto/rand 抽取索引，不使用可种子化的 PRNG（批次排列是可观测输出，
+可种子化 PRNG 的状态可被离线暴力恢复，进而反推全部历史混洗映射）。
+
 ## Cover Traffic **[must]**
 
 无 cover 时，发送速率本身即活跃度指纹。所有启用 DHT 的节点以 **Poisson 过程**注入 dummy cell（均值 `--dummy-rate`，生产默认 0.5 cell/s ≈ 每 2 秒 1 条；0=关闭，库默认关闭以保证测量确定性）：
@@ -178,4 +206,4 @@ v1 仅使用 `TypeAsync`（mix 送达）与 direct JSON 消息（`--insecure`）
 
 - libp2p：TCP transport，Noise 安全（X25519 + ChaCha20-Poly1305），yamux 多路复用。
 - 应用层帧：4-byte big-endian 长度 + payload，上限 1 MB。
-- Relay 发现：Kademlia DHT rendezvous（`np4-relay`）+ mDNS（局域网）。
+- Relay 发现：Kademlia DHT rendezvous（`np4-relay`）；mDNS helper 存在但无生产调用。
