@@ -69,6 +69,16 @@ Android 的 `.so` 由 Gradle 自动打包（`jniLibs`）；macOS 经 `macos/Np4B
 `assets/icon-1024.png` 生成；母图来自 `clients/tools/gen_icon.py`
 （Pillow 绘制：翡翠盾牌 + 洋葱层弧线 + 深空底，改参数重跑即可整套更新）。
 
+## 发布构建（重要：别分发 debug APK）
+
+debug APK 约 205 MB 且带 JIT 慢速运行时；发布一律：
+
+```bash
+flutter build apk --release --split-per-abi
+# 产物：app-arm64-v8a-release.apk ≈ 46 MB（另两个 ABI 各一份）
+# 或商店分发：flutter build appbundle --release
+```
+
 ## CI
 
 `.github/workflows/ci.yml` 在 push/PR 上自动执行 `flutter analyze` +

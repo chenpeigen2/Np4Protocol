@@ -59,10 +59,10 @@ proto/         共享 proto/消息定义
 要求：Go 1.26+，Go 模块代理建议 `GOPROXY=https://goproxy.cn,direct`（国内网络）。
 
 ```bash
-# 1. 构建
+# 1. 构建（-s -w 剥符号：np4cli 37.6→26.0 MB，bootstrap 51.6→~35 MB）
 cd go
-go build -o bin/bootstrap ./cmd/bootstrap/
-go build -o bin/np4cli    ./cmd/np4cli/
+go build -ldflags="-s -w" -o bin/bootstrap ./cmd/bootstrap/
+go build -ldflags="-s -w" -o bin/np4cli    ./cmd/np4cli/
 
 # 2. 启动 bootstrap（单服务器模式：DHT 种子 + relay + 准入/限速可选）
 ./bin/bootstrap start --port 4000 --identity ./boot.id --web 8080
