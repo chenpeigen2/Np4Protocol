@@ -2,6 +2,6 @@
 __pycache__/
 *.pyc
 native/
-clients/pyqt/dist/
-clients/pyqt/build/
-clients/pyqt/*.spec
+dist/
+build/
+*.spec
