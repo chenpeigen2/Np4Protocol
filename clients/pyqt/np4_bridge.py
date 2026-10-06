@@ -13,6 +13,7 @@ import ctypes
 import json
 import os
 import platform
+import sys
 from pathlib import Path
 
 _LIB_NAMES = {
@@ -29,6 +30,14 @@ class Np4BridgeError(RuntimeError):
 def _candidate_dirs() -> list[Path]:
     here = Path(__file__).resolve().parent
     dirs = [here / "native"]
+    # PyInstaller bundle: --add-binary lands the dylib under np4bridge/, but
+    # WHERE depends on the PyInstaller major: 6.x onedir puts deps in
+    # _internal/ while sys._MEIPASS points at the app top-level. Cover both.
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        base = Path(meipass)
+        dirs.append(base / "np4bridge")
+        dirs.append(base / "_internal" / "np4bridge")
     sub = {"Darwin": "macos", "Windows": "windows", "Linux": "linux"}.get(platform.system())
     if sub:
         dirs.append(here / "native" / sub)

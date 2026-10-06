@@ -62,10 +62,13 @@ NP4_BOOTSTRAP=/ip4/1.2.3.4/tcp/4000/p2p/12D3KooW... NP4_AUTOCONNECT=1 python mai
 
 ## 打包分发（可选）
 
-PyInstaller 可打出免依赖的可执行文件（原生库用 `--add-binary` 带上）：
-
 ```bash
-pyinstaller --windowed --name np4chat \
-  --add-binary "$(../flutter/tool/build_native.sh macos >/dev/null; ls ../flutter/native/macos/libnp4bridge.dylib)" \
-  main.py
+tool/package.sh              # macOS .app（含品牌图标 + 原生库）
+tool/package.sh console      # 带控制台输出的诊断版
 ```
+
+PyInstaller 打包（需 `.venv` 里装 `pyinstaller`）。原生库自动打进去并经
+`np4_bridge._candidate_dirs` 的 `_MEIPASS` 路径找到；windowed 版所有
+`[np4]` 日志重定向到 `~/Library/Application Support/np4chat/np4chat.log`
+（stdout 在 --windowed 下是空写入器，必须走文件才可排查）。Windows/Linux
+用同一脚本在本机打包（PyInstaller 不交叉编译）。

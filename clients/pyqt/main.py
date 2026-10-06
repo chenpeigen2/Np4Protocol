@@ -22,6 +22,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import (
     QAbstractAnimation,
+    QStandardPaths,
     QEasingCurve,
     QPropertyAnimation,
     Qt,
@@ -720,10 +721,30 @@ def _ui_excepthook(exc_type, exc, tb) -> None:
     traceback.print_exception(exc_type, exc, tb, file=sys.stderr)
 
 
+def _frozen_logging() -> None:
+    """PyInstaller --windowed gives stdout/stderr a null writer: every
+    diagnostic print would be lost. Redirect both to a log file next to
+    the app's data so packaged builds are debuggable at all."""
+    frozen = getattr(sys, "frozen", False)
+    base = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.AppDataLocation) or "/tmp"
+    log_dir = Path(base)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    (log_dir / "np4chat-boot.txt").write_text(
+        f"frozen={frozen} base={base}\n", encoding="utf-8")
+    if not frozen:
+        return
+    log_path = log_dir / "np4chat.log"
+    log_file = open(log_path, "a", buffering=1, encoding="utf-8")
+    sys.stdout = log_file
+    sys.stderr = log_file
+
+
 def main() -> int:
     sys.excepthook = _ui_excepthook
     app = QApplication(sys.argv)
     _dark_palette(app)
+    _frozen_logging()
     app.setStyleSheet(GLOBAL_QSS)
     # Unified NP4 brand icon (clients/tools/gen_icon.py) — window, taskbar
     # and dock all inherit it.
