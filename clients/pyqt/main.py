@@ -14,6 +14,7 @@ Demo: NP4_BOOTSTRAP=<multiaddr> NP4_AUTOCONNECT=1 python main.py
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from datetime import datetime
@@ -243,6 +244,42 @@ def _stamp() -> str:
     return datetime.now().strftime("%H:%M")
 
 
+def _history_item(page: "ChatPage", text: str, ts: str, origin: str, mine: bool) -> QListWidgetItem:
+    """Static history row (no entrance animation on bulk load)."""
+    item = QListWidgetItem()
+    from PyQt6.QtCore import QSize
+    item.setSizeHint(QSize(360, 64))
+    bubble = QFrame()
+    bubble.setObjectName("bubbleMine" if mine else "bubbleTheirs")
+    v = QVBoxLayout(bubble)
+    v.setContentsMargins(12, 8, 12, 5)
+    v.setSpacing(2)
+    origin_label = QLabel(origin)
+    origin_label.setObjectName("origin")
+    origin_label.setStyleSheet(
+        f"color: {MUTED if mine else ACCENT}; font-size: 11px; font-weight: 600;")
+    v.addWidget(origin_label)
+    content = QLabel(text)
+    content.setWordWrap(True)
+    content.setStyleSheet(f"color: {TEXT}; font-size: 14px;")
+    v.addWidget(content)
+    ts_label = QLabel(ts)
+    ts_label.setObjectName("ts")
+    ts_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+    v.addWidget(ts_label)
+    h = QHBoxLayout()
+    h.setContentsMargins(8, 3, 8, 3)
+    if mine:
+        h.addStretch(1)
+        h.addWidget(bubble)
+    else:
+        h.addWidget(bubble)
+        h.addStretch(1)
+    holder = QWidget()
+    holder.setLayout(h)
+    return item, holder
+
+
 class ConnectPage(QWidget):
     connect_requested = pyqtSignal(str, int)  # bootstrap multiaddr, hops
 
@@ -407,10 +444,16 @@ class ChatPage(QWidget):
     send_requested = pyqtSignal(str, str)  # dest, text
     refresh_requested = pyqtSignal()
 
-    def __init__(self, peer_id: str) -> None:
+    HISTORY_LIMIT = 500  # keep the most recent messages on disk
+
+    def __init__(self, peer_id: str, history_path: Path | None = None) -> None:
         super().__init__()
         self.setObjectName("page")
         self._peer_id = peer_id
+        # Chat history lives next to the identity file (same trust boundary,
+        # same backup story). Plaintext by design: anyone with filesystem
+        # access to the identity already owns this identity's messages.
+        self._history_path = history_path
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 14, 12)
         layout.setSpacing(10)
@@ -481,6 +524,8 @@ class ChatPage(QWidget):
         footer_layout.addLayout(input_row)
         layout.addWidget(footer)
 
+        self._load_history()
+
     def _emit_send(self) -> None:
         dest = self.dest.currentText().strip()
         text = self.input.toPlainText().strip()
@@ -512,6 +557,46 @@ class ChatPage(QWidget):
         # Entrance: the bubble expands into place (geometry-only motion).
         _expand_into_list(self.messages, row, ms=260)
 
+    def _append_history(self, entry: dict) -> None:
+        """Append one entry to the JSONL history file, trimming to limit."""
+        if self._history_path is None:
+            return
+        try:
+            lines = []
+            if self._history_path.exists():
+                lines = self._history_path.read_text(encoding="utf-8").splitlines()
+            lines.append(json.dumps(entry, ensure_ascii=False))
+            lines = lines[-self.HISTORY_LIMIT:]
+            self._history_path.write_text(
+                "\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as e:
+            print(f"[np4] chat history write failed: {e}", flush=True)
+
+    def _load_history(self) -> None:
+        """Render the persisted conversation on startup (most recent last)."""
+        if self._history_path is None or not self._history_path.exists():
+            return
+        try:
+            lines = self._history_path.read_text(encoding="utf-8").splitlines()
+        except OSError as e:
+            print(f"[np4] chat history read failed: {e}", flush=True)
+            return
+        for line in lines[-200:]:
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # torn tail line: skip, next write rewrites cleanly
+            entry_item, holder = _history_item(
+                self, entry.get("content", ""), entry.get("ts", ""),
+                entry.get("origin", ""), entry.get("mine", False))
+            self.messages.addItem(entry_item)
+            self.messages.setItemWidget(entry_item, holder)
+        self.messages.scrollToBottom()
+
+    def _record(self, mine: bool, text: str, origin: str) -> None:
+        self._append_history(
+            {"mine": mine, "content": text, "origin": origin, "ts": _stamp()})
+
     def add_incoming(self, sender: str, content: str, verified: bool) -> None:
         # Sender attribution comes from the pairwise auth tag: a verified
         # message shows which contact sent it, an unverified one stays
@@ -523,9 +608,11 @@ class ChatPage(QWidget):
             origin = "⚠ 未验证来源"
             color = WARN
         self._append_row(MessageRow(Bubble(content, origin, mine=False, origin_color=color), mine=False))
+        self._record(mine=False, text=content, origin=origin)
 
     def add_outgoing(self, text: str) -> None:
         self._append_row(MessageRow(Bubble(text, "我 · 已进入匿名队列", mine=True, origin_color=MUTED), mine=True))
+        self._record(mine=True, text=text, origin="我 · 已进入匿名队列")
 
     def clear_input(self) -> None:
         self.input.clear()
@@ -574,7 +661,13 @@ class MainWindow(QMainWindow):
         self.controller.connect(bootstrap, hops)
 
     def _on_node_ready(self, node: dict) -> None:
-        self._chat = ChatPage(node["peer_id"])
+        from np4_controller import default_identity_path
+
+        identity = Path(default_identity_path())
+        self._chat = ChatPage(
+            node["peer_id"],
+            history_path=identity.parent / (identity.name + ".chatlog"),
+        )
         # UI → controller (chat actions)
         self._chat.send_requested.connect(self.controller.send)
         self._chat.refresh_requested.connect(self.controller.refresh_peers)

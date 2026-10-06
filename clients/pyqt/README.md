@@ -51,6 +51,12 @@ NP4_BOOTSTRAP=/ip4/1.2.3.4/tcp/4000/p2p/12D3KooW... NP4_AUTOCONNECT=1 python mai
 | `NP4_SELFTEST_SEND_TO=<peer-id>` | 联系人出现后自动发一条消息（双窗口无人值守测试） |
 | `NP4_SCREENSHOT=<path>` | 启动后自动截窗保存（`NP4_SCREENSHOT_DELAY_MS` 控制延时），无需屏幕录制权限 |
 
+## 聊天记录持久化
+
+会话消息保存在身份文件旁（`<identity>.chatlog`，JSONL，保留最近 500 条），
+重启后自动恢复显示。**明文存储**：能读到身份文件的人本来就能读你的聊天
+记录——需要抹除痕迹时直接删除 `.chatlog` 文件即可。
+
 聊天输入框 **Ctrl+Enter** 直接发送（普通 Enter 换行）。品牌图标由
 `clients/tools/gen_icon.py` 生成（`assets/icon.png`，窗口/任务栏/Dock 共用）。
 

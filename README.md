@@ -51,7 +51,6 @@ clients/
 deploy/        Dockerfile + docker-compose 单服务器部署
 docs/          协议规范（protocol.md）与计划文档
 .github/       CI（Go 矩阵 + Flutter + PyQt，push/PR 自动执行）
-proto/         共享 proto/消息定义
 ```
 
 ## 快速开始
