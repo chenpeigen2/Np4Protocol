@@ -8,14 +8,12 @@ import (
 	"sync"
 )
 
+// MessageType discriminates wire message kinds. Only TypeAsync is live
+// today (mix delivery); the rest are protocol placeholders for [v2].
 type MessageType int
 
 const (
 	TypeAsync MessageType = iota
-	TypeSyncRequest
-	TypeSyncResponse
-	TypeBroadcast
-	TypeFileChunk
 )
 
 type Message struct {
@@ -26,9 +24,8 @@ type Message struct {
 	// (pairwise tag). False means the sender is anonymous — either the tag
 	// matched no known contact or the transport cannot authenticate (direct).
 	// UIs badge unverified messages instead of dropping them.
-	Verified   bool
-	Content    []byte
-	SessionKey []byte
+	Verified bool
+	Content  []byte
 }
 
 type MessageHandler func(*Message)
@@ -134,15 +131,6 @@ func (b *MessageBus) Send(msg *Message) error {
 	default:
 		return ErrBusFull
 	}
-}
-
-// Broadcast is like Send but does not mutate the input message; it sends a copy
-// tagged as TypeBroadcast with an empty DestID.
-func (b *MessageBus) Broadcast(msg *Message) error {
-	cp := *msg
-	cp.Type = TypeBroadcast
-	cp.DestID = ""
-	return b.Send(&cp)
 }
 
 // Stop signals all workers to exit. Idempotent.

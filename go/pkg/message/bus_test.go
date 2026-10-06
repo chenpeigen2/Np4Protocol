@@ -33,23 +33,6 @@ func TestSendDispatchesToHandlers(t *testing.T) {
 	}
 }
 
-func TestBroadcastDoesNotMutateInput(t *testing.T) {
-	b := NewMessageBus()
-	b.Start()
-	defer b.Stop()
-
-	original := &Message{Type: TypeAsync, DestID: "dest", Content: []byte("x")}
-	snapshot := *original
-
-	if err := b.Broadcast(original); err != nil {
-		t.Fatalf("Broadcast: %v", err)
-	}
-
-	if original.Type != snapshot.Type || original.DestID != snapshot.DestID {
-		t.Errorf("Broadcast mutated input: %+v vs %+v", original, snapshot)
-	}
-}
-
 func TestBusStopsCleanly(t *testing.T) {
 	b := NewMessageBus()
 	b.Start()

@@ -104,6 +104,14 @@ func TestDirectEmptyDestIsRejected(t *testing.T) {
 // sendRawDirect writes an arbitrary crafted message over the direct protocol,
 // bypassing SendDirect's field fixing — the attacker's exact capability.
 func sendRawDirect(n *Node, dest peer.ID, msg *message.Message) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	return sendRawDirectJSON(n, dest, data)
+}
+
+func sendRawDirectJSON(n *Node, dest peer.ID, data []byte) error {
 	ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
 	defer cancel()
 	s, err := n.host.NewStream(ctx, dest, ProtocolDirect)
@@ -111,18 +119,16 @@ func sendRawDirect(n *Node, dest peer.ID, msg *message.Message) error {
 		return err
 	}
 	defer s.Close()
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
 	return p2p.WriteMsg(s, data)
 }
 
-// TestDirectSessionKeyNotInjected pins the wire-field hygiene on the direct
-// protocol: message.Message carries a SessionKey slot (legacy). No handler
-// consumes it today, but a wire-supplied key must never land in application
-// structs — the same class of hole as the forged Verified badge.
-func TestDirectSessionKeyNotInjected(t *testing.T) {
+// TestDirectIgnoresUnknownWireFields pins the rebuild defense: the direct
+// handler unmarshals attacker-controlled JSON, so the wire can carry ANY
+// extra fields (SessionKey, forged Verified, etc.). The handler must rebuild
+// the message from honored fields only — unknown/forged wire content never
+// reaches the application. (SessionKey was removed from message.Message
+// entirely; the wire field is simply ignored on unmarshal.)
+func TestDirectIgnoresUnknownWireFields(t *testing.T) {
 	dir := t.TempDir()
 	snd, err := NewNode(0, WithIdentity(filepath.Join(dir, "snd")))
 	if err != nil {
@@ -141,19 +147,22 @@ func TestDirectSessionKeyNotInjected(t *testing.T) {
 	ch := make(chan *message.Message, 4)
 	rcv.OnMessage(func(m *message.Message) { ch <- m })
 
-	if err := sendRawDirect(snd, rcv.ID(), &message.Message{
-		DestID:     rcv.ID().String(),
-		SenderID:   "anonymous",
-		Content:    []byte("payload"),
-		SessionKey: []byte("attacker-chosen key material"),
-	}); err != nil {
+	// Raw attacker JSON: forged Verified plus a SessionKey field that no
+	// longer exists on the struct — both must be inert.
+	raw := []byte(`{"DestID":"` + rcv.ID().String() +
+		`","SenderID":"12D3KooWImpersonatedFriend","Verified":true,` +
+		`"SessionKey":"attacker-chosen key material","Content":"cGF5bG9hZA=="}`)
+	if err := sendRawDirectJSON(snd, rcv.ID(), raw); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 
 	select {
 	case m := <-ch:
-		if len(m.SessionKey) != 0 {
-			t.Fatalf("wire-supplied SessionKey reached the application (%d bytes)", len(m.SessionKey))
+		if m.Verified {
+			t.Fatal("forged Verified=true reached the application")
+		}
+		if string(m.Content) != "payload" {
+			t.Fatalf("content corrupted: %q", m.Content)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("direct message not delivered")
