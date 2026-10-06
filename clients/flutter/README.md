@@ -90,3 +90,4 @@ flutter build apk --release --split-per-abi
 - 消息为尽力送达；"已发送"仅表示已进入匿名队列（端到端 ACK 是 [v2]）。
 - 对方离线 / 未发布 key / relay 不足（hops > 在线 relay 数）都会硬失败并弹出错误。
 - 身份文件存在 app support 目录（`np4_identity`）；卸载清数据 = 身份更换 = 对方需要重新填你的 Peer ID。
+- **聊天记录持久化**：会话消息存 `<identity>.chatlog`（JSONL，最近 500 条，明文——能读身份文件的人本就能读聊天记录），重启自动恢复；抹除痕迹直接删除该文件。

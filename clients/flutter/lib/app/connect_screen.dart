@@ -90,8 +90,9 @@ class _ConnectScreenState extends State<ConnectScreen>
 
     try {
       final support = await getApplicationSupportDirectory();
+      final identityPath = '${support.path}/np4_identity';
       final client = await connectFfi(Np4Config(
-        identityPath: '${support.path}/np4_identity',
+        identityPath: identityPath,
         bootstrap: bootstrap,
         hops: hops,
       ));
@@ -101,7 +102,11 @@ class _ConnectScreenState extends State<ConnectScreen>
       // hand off. Cold-start: path selection retries up to 25s on first send.
       if (!mounted) return;
       Navigator.of(context).pushReplacement(FadeSlideRoute(
-        builder: (_) => ChatScreen(client: client, bootstrap: bootstrap),
+        builder: (_) => ChatScreen(
+          client: client,
+          bootstrap: bootstrap,
+          historyPath: '$identityPath.chatlog',
+        ),
       ));
     } catch (e) {
       if (!mounted) return;

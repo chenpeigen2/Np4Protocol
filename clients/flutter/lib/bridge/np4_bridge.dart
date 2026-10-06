@@ -138,11 +138,16 @@ class PeerEntry {
 /// High-level client for one np4 node. Mix sends only — there is no direct
 /// fallback here, matching the protocol's hard-fail semantics.
 class Np4Client {
-  Np4Client._(this._transport, this._handle, this.peerId);
+  Np4Client._(this._transport, this._handle, this.peerId,
+      {this.identityPath = ''});
 
   final Np4Transport _transport;
   final int _handle;
   final String peerId;
+
+  /// Where this node's identity lives; chat history derives its path from
+  /// this (<identity>.chatlog). Empty for fake transports.
+  final String identityPath;
 
   final _messages = StreamController<Np4Incoming>.broadcast();
 
@@ -159,7 +164,8 @@ class Np4Client {
     if (config.bootstrap.isNotEmpty) {
       await transport.call(info.handle, 'publish_keys', {});
     }
-    final client = Np4Client._(transport, info.handle, info.peerId);
+    final client = Np4Client._(transport, info.handle, info.peerId,
+        identityPath: config.identityPath);
     client._sub = transport.events.listen(client._messages.add);
     return client;
   }

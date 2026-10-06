@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../bridge/np4_bridge.dart';
+import 'chat_history.dart';
 import 'theme.dart';
 
 class _ChatMessage {
@@ -31,10 +32,17 @@ class _ChatMessage {
 /// tag attributes them; our own messages are echoed locally. Delivery is
 /// best-effort: offline peers lose the message.
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key, required this.client, required this.bootstrap});
+  const ChatScreen({
+    super.key,
+    required this.client,
+    required this.bootstrap,
+    this.historyPath = '',
+  });
 
   final Np4Client client;
   final String bootstrap;
+  // <identity>.chatlog when provided; empty disables persistence (tests).
+  final String historyPath;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -51,6 +59,9 @@ class _ChatScreenState extends State<ChatScreen>
   StreamSubscription<Np4Incoming>? _sub;
   Timer? _peersTimer;
   bool _sending = false;
+  // Chat history lives next to the identity file (same trust boundary,
+  // same backup story) — see ChatHistory.
+  ChatHistory? _history;
   // Slow breathing on the empty-state badge.
   late final AnimationController _emptyFx = AnimationController(
     vsync: this,
@@ -71,6 +82,10 @@ class _ChatScreenState extends State<ChatScreen>
     _sub = widget.client.messages.listen(_onIncoming, onError: (Object e) {
       _toast('接收异常：$e');
     });
+    if (widget.historyPath.isNotEmpty) {
+      _history = ChatHistory(widget.historyPath);
+      _loadHistory();
+    }
     _refreshPeers();
     // Peer liveness: discovery records churn as nodes join and leave.
     _peersTimer =
@@ -117,6 +132,40 @@ class _ChatScreenState extends State<ChatScreen>
     super.dispose();
   }
 
+  void _loadHistory() {
+    final history = _history;
+    if (history == null) return;
+    for (final entry in history.load()) {
+      final mine = (entry['mine'] as bool?) ?? false;
+      final verified = (entry['verified'] as bool?) ?? false;
+      final sender = (entry['sender'] as String?) ?? 'anonymous';
+      var time = DateTime.now();
+      try {
+        time = DateTime.parse(entry['ts'] as String);
+      } catch (_) {}
+      setState(() {
+        _messages.add(_ChatMessage(
+          sender: sender,
+          text: (entry['content'] as String?) ?? '',
+          time: time,
+          mine: mine,
+          verified: verified,
+        ));
+      });
+    }
+    _scrollToBottom();
+  }
+
+  void _record(_ChatMessage m) {
+    _history?.append({
+      'mine': m.mine,
+      'sender': m.sender,
+      'verified': m.verified,
+      'content': m.text,
+      'ts': m.time.toIso8601String(),
+    });
+  }
+
   void _onIncoming(Np4Incoming msg) {
     // Debug builds log delivery so attached tooling (flutter run) can verify
     // end-to-end flow without touching the UI.
@@ -131,6 +180,7 @@ class _ChatScreenState extends State<ChatScreen>
         verified: msg.verified,
       ));
     });
+    _record(_messages.last);
     _scrollToBottom();
   }
 
@@ -173,6 +223,7 @@ class _ChatScreenState extends State<ChatScreen>
           time: DateTime.now(),
           mine: true,
         ));
+        _record(_messages.last);
         _inputCtrl.clear();
       });
       _scrollToBottom();
