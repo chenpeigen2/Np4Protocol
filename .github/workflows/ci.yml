@@ -87,16 +87,25 @@ jobs:
         with:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
-      # Point the native build at the runner's preinstalled NDK (the
-      # script's default probe is macOS-specific); install one if absent.
+      # build_native.sh probes $ANDROID_NDK_HOME/<version>/toolchains — it
+      # wants the ndk PARENT dir. Use a preinstalled NDK if present, else
+      # install one via sdkmanager (full path: cmdline-tools may not be on
+      # PATH). Echo what we found so failures are diagnosable.
       - name: Locate Android NDK
         run: |
-          NDK=$(ls -d ${ANDROID_HOME:-/usr/local/lib/android/sdk}/ndk/* 2>/dev/null | sort -V | tail -1 || true)
-          if [ -z "$NDK" ]; then
-            yes | sdkmanager --install "ndk;27.0.12077973" >/dev/null
-            NDK=$(ls -d ${ANDROID_HOME:-/usr/local/lib/android/sdk}/ndk/* | sort -V | tail -1)
+          SDK=${ANDROID_HOME:-/usr/local/lib/android/sdk}
+          echo "SDK=$SDK"; ls "$SDK" 2>/dev/null | head -20
+          NDKS=$(ls -d "$SDK/ndk"/* 2>/dev/null | sort -V || true)
+          echo "preinstalled NDKs: ${NDKS:-none}"
+          if [ -z "$NDKS" ]; then
+            SDKMANAGER=$(ls "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | sort -V | tail -1 || true)
+            echo "sdkmanager: ${SDKMANAGER:-not found}"
+            test -n "$SDKMANAGER"
+            yes | "$SDKMANAGER" --sdk_root="$SDK" --install "ndk;27.0.12077973" >/dev/null
+            NDKS=$(ls -d "$SDK/ndk"/* | sort -V)
           fi
-          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$SDK/ndk" >> "$GITHUB_ENV"
+          ls -d "$SDK"/ndk/*/toolchains/llvm/prebuilt/*/bin | head -2
       # Native libs are gitignored: rebuild them for the APK.
       - name: Build native libs (android)
         run: ./tool/build_native.sh android
