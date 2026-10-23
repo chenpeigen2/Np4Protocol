@@ -38,6 +38,15 @@ jobs:
           ./pkg/cell/ ./pkg/onion/ ./pkg/pathsel/ ./pkg/auth/
       - name: Build
         run: go build ./...
+      - name: Release binaries (linux/amd64, stripped)
+        run: >-
+          CGO_ENABLED=0 go build -ldflags="-s -w" -o dist/bootstrap ./cmd/bootstrap/ &&
+          CGO_ENABLED=0 go build -ldflags="-s -w" -o dist/np4cli ./cmd/np4cli/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: np4-linux-binaries
+          path: go/dist/
+          retention-days: 14
 
   flutter:
     name: Flutter — analyze, test
@@ -54,6 +63,35 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
+
+  flutter-release:
+    name: Flutter — release APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/flutter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: android-actions/setup-android@v3
+      # Native libs are gitignored: rebuild them for the APK (Go is
+      # preinstalled on ubuntu runners; version from go.mod).
+      - name: Build native libs (android)
+        run: ./tool/build_native.sh android
+      - run: flutter pub get
+      - run: flutter build apk --release --split-per-abi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: np4-release-apks
+          path: clients/flutter/build/app/outputs/flutter-apk/*-release.apk
+          retention-days: 14
 
   pyqt:
     name: PyQt — compile + import smoke
