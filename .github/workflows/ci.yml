@@ -81,8 +81,21 @@ jobs:
           channel: stable
           cache: true
       - uses: android-actions/setup-android@v3
-      # Native libs are gitignored: rebuild them for the APK (Go is
-      # preinstalled on ubuntu runners; version from go.mod).
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      # Point the native build at the runner's preinstalled NDK (the
+      # script's default probe is macOS-specific); install one if absent.
+      - name: Locate Android NDK
+        run: |
+          NDK=$(ls -d ${ANDROID_HOME:-/usr/local/lib/android/sdk}/ndk/* 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$NDK" ]; then
+            yes | sdkmanager --install "ndk;27.0.12077973" >/dev/null
+            NDK=$(ls -d ${ANDROID_HOME:-/usr/local/lib/android/sdk}/ndk/* | sort -V | tail -1)
+          fi
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+      # Native libs are gitignored: rebuild them for the APK.
       - name: Build native libs (android)
         run: ./tool/build_native.sh android
       - run: flutter pub get
