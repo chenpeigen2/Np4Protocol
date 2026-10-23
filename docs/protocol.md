@@ -20,15 +20,20 @@ Np4Protocol is a Mixnet-based anonymous communication protocol designed for meta
 - 开放准入模式（无 --allowlist）下无抗 Sybil：攻击者可注册大量 relay 吸路径。
 - Replay 防线依赖内存缓存（eph_pub LRU 100k + msg_id 去重 100k）：重启清零、淘汰后窗口重开；去重保证不重复投递，残余风险为容量挤占，评估低危（2026-10-01 审查备案）。
 
-**已度量的基线**（`TestMiddleRelayUnlinkability`，60 条流，6 客户端，中间 relay 时序关联攻击）：
+**已度量的基线**（`TestMiddleRelayUnlinkability` +
+`TestCoverTrafficDilutesTimingCorrelation`，60 条流，6 客户端，中间 relay
+时序关联攻击；2026-10-07 重测）：
 
 | 场景 | 攻击者配对 precision |
 |---|---|
 | 无混洗（控制组） | 1.00 |
-| 正常混洗（实测） | 0.45 |
+| 正常混洗（实测） | 0.37 |
 | 完美混洗（Monte Carlo chance） | 0.37 ± 0.08 |
+| **混洗 + cover traffic（5 cell/s/客户端，实测）** | **0.12** |
 
-结论：单个中间 relay 的时序关联攻击被压到 chance 水平（差异在统计噪声内）。此表随 dummy traffic 等 [v2] 特性更新。
+结论：混洗把时序关联攻击压到 chance 水平；叠加 cover traffic 后被压到
+**远低于 chance**——密集 dummy 使攻击者的最佳配对系统性选错（比瞎猜更差），
+同时真实消息 60/60 零丢失（dummy 永不挤占真实流量，见 Mix 参数表）。
 
 ## Architecture
 

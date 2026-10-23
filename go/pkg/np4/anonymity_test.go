@@ -81,8 +81,8 @@ type anRunResult struct {
 
 // TestMiddleRelayUnlinkability is the load-bearing anonymity assertion.
 func TestMiddleRelayUnlinkability(t *testing.T) {
-	mixed := runAnonymityExperiment(t, false)
-	control := runAnonymityExperiment(t, true)
+	mixed := runAnonymityExperiment(t, false, 0)
+	control := runAnonymityExperiment(t, true, 0)
 
 	t.Logf("delivered %d/%d sends in each run", mixed.delivered, anSends)
 	if mixed.delivered != anSends || control.delivered != anSends {
@@ -110,12 +110,15 @@ func TestMiddleRelayUnlinkability(t *testing.T) {
 	}
 }
 
-func runAnonymityExperiment(t *testing.T, control bool) anRunResult {
+func runAnonymityExperiment(t *testing.T, control bool, coverRate float64) anRunResult {
 	t.Helper()
 	dir := t.TempDir()
 	label := "mixed"
 	if control {
 		label = "control"
+	}
+	if coverRate > 0 {
+		label += "+cover"
 	}
 
 	boot, err := NewNode(0, WithIdentity(filepath.Join(dir, "boot")), WithDHTServer())
@@ -152,10 +155,20 @@ func runAnonymityExperiment(t *testing.T, control bool) anRunResult {
 
 	clients := make([]*Node, anClients)
 	for i := range clients {
-		n, err := NewNode(0,
+		clientOpts := []Option{
 			WithIdentity(filepath.Join(dir, fmt.Sprintf("c%d", i))),
 			WithBootstrap([]peer.AddrInfo{bootAddr}),
-		)
+		}
+		if coverRate > 0 {
+			// Cover traffic: fresh dummies on a Poisson schedule dilute the
+			// timing pattern the attacker correlates. Short refresh so the
+			// contact cache warms inside the experiment window.
+			clientOpts = append(clientOpts,
+				WithDummyRate(coverRate),
+				WithContactRefreshInterval(3*time.Second),
+				WithHops(1))
+		}
+		n, err := NewNode(0, clientOpts...)
 		if err != nil {
 			t.Fatalf("[%s] client %d: %v", label, i, err)
 		}
@@ -426,5 +439,33 @@ func sendRawTo(t *testing.T, from, to *Node, wire []byte) {
 	defer s.Close()
 	if err := p2p.WriteMsg(s, wire); err != nil {
 		t.Fatalf("write wire: %v", err)
+	}
+}
+
+// TestCoverTrafficDilutesTimingCorrelation re-measures the unlinkability
+// baseline WITH cover traffic enabled (M3): each client injects Poisson
+// dummies at coverRate cells/s. The spec's baseline table promises this
+// refresh when dummy traffic lands — this test produces the numbers.
+// Assertions stay tolerance-based (within the chance band); the printed
+// control/mixed/mixed+cover comparison is the deliverable.
+func TestCoverTrafficDilutesTimingCorrelation(t *testing.T) {
+	const coverRate = 5.0 // cells/s per client — dense, to show the effect
+
+	cover := runAnonymityExperiment(t, false, coverRate)
+
+	chanceMean, chanceStd := monteCarloBaseline(cover.sends, cover.egress)
+	tolerance := chanceStd*3 + 0.08
+
+	t.Logf("attacker precision with cover: mixed+cover=%.2f chance=%.2f±%.2f",
+		cover.precision, chanceMean, chanceStd)
+
+	if cover.delivered != anSends {
+		t.Fatalf("cover run lost real messages (delivered %d/%d) — dummies "+
+			"must never displace real traffic", cover.delivered, anSends)
+	}
+	if cover.precision > chanceMean+tolerance {
+		t.Errorf("cover run precision %.2f exceeds chance %.2f±%.2f — cover "+
+			"traffic did not help (or broke) timing resistance",
+			cover.precision, chanceMean, chanceStd)
 	}
 }
