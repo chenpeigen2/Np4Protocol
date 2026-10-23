@@ -80,7 +80,9 @@ jobs:
         with:
           channel: stable
           cache: true
-      - uses: android-actions/setup-android@v3
+      # ubuntu runners ship the Android SDK preinstalled (ANDROID_HOME +
+      # sdkmanager on PATH); android-actions/setup-android@v3 fails on
+      # public repos and is unnecessary here.
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
