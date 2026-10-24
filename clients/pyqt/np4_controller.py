@@ -47,8 +47,9 @@ class ChatController(QObject):
     node_ready = pyqtSignal(dict)  # {handle, peer_id, addrs}
     state_changed = pyqtSignal(str)
     message_received = pyqtSignal(str, str, bool)  # sender, content, verified
+    ack_received = pyqtSignal(str)  # msg_id of a delivered message
     peers_updated = pyqtSignal(list)  # [(peer_id, addrs)]
-    send_completed = pyqtSignal(str, str)  # text, error ('' = success)
+    send_completed = pyqtSignal(str, str, str)  # text, error ('' = success), msg_id
     # The destination is not in the current online list: delivery is
     # best-effort and this message will most likely be lost. UI should warn.
     delivery_risk = pyqtSignal(str)  # dest
@@ -87,6 +88,7 @@ class ChatController(QObject):
         self._worker.node_ready.connect(self._on_node_ready)
         self._worker.state_changed.connect(self.state_changed)
         self._worker.message_received.connect(self.message_received)
+        self._worker.ack_received.connect(self.ack_received)
         self._worker.peers_ready.connect(self._on_peers)
         self._worker.send_done.connect(self._on_send_done)
         self._worker.failed.connect(self._on_failed)
@@ -146,8 +148,8 @@ class ChatController(QObject):
             self.state_changed.emit(f"在线（联系人 {len(contacts)} · relay {relays}）")
         self._maybe_selftest(contacts)
 
-    def _on_send_done(self, dest: str, text: str, error: str) -> None:
-        self.send_completed.emit(text, error)
+    def _on_send_done(self, dest: str, text: str, error: str, msg_id: str) -> None:
+        self.send_completed.emit(text, error, msg_id)
 
     def _on_failed(self, message: str) -> None:
         self.shutdown()

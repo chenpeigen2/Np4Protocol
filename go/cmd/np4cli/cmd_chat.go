@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -58,6 +59,10 @@ var chatCmd = &cobra.Command{
 				from = "⚠ " + from + " (unverified)"
 			}
 			fmt.Printf("\n[%s] %s: %s\n> ", time.Now().Format("15:04:05"), from, string(msg.Content))
+		})
+		n.OnAck(func(msgID []byte, from peer.ID) {
+			fmt.Printf("\n[%s] ✓✓ 已送达 %s（消息 %s…）\n> ",
+				time.Now().Format("15:04:05"), from, hex.EncodeToString(msgID[:4]))
 		})
 
 		scanner := bufio.NewScanner(os.Stdin)

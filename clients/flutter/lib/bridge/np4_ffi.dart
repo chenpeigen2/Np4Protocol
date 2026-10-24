@@ -44,6 +44,16 @@ class FfiTransport implements Np4Transport {
     final msg = raw as Map;
     if (msg.containsKey('event')) {
       final ev = (msg['event'] as Map).cast<String, dynamic>();
+      if (ev['type'] == 'ack') {
+        // Delivery receipt: content slot carries the acked msg_id (hex).
+        _events.add(Np4Incoming(
+          sender: (ev['sender'] as String?) ?? '',
+          content: (ev['msg_id'] as String?) ?? '',
+          verified: true,
+          isAck: true,
+        ));
+        return;
+      }
       _events.add(Np4Incoming(
         sender: (ev['sender'] as String?) ?? 'anonymous',
         // The bridge JSON carries content as base64 (go/pkg/bridge).

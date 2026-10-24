@@ -52,6 +52,11 @@ const (
 	TypeDummy Type = 0x00
 	// TypeText is an application message carrying a sender-auth tag.
 	TypeText Type = 0x01
+	// TypeAck is a delivery receipt: content is the 16-byte msg_id of the
+	// delivered text cell, routed back through the mix. Only sent for
+	// VERIFIED messages (an unverified sender has no return address), and
+	// never re-acked itself (that would echo forever).
+	TypeAck Type = 0x02
 )
 
 // ErrTooLarge is returned by Seal when content does not fit in a single cell.

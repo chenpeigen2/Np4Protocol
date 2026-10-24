@@ -14,6 +14,8 @@ class _ChatMessage {
     required this.time,
     required this.mine,
     this.verified = false,
+    this.msgId,
+    this.delivered = false,
   });
 
   final String sender;
@@ -23,6 +25,11 @@ class _ChatMessage {
   // Incoming only: the pairwise auth tag matched a known contact. Our own
   // echoed messages never carry it.
   final bool verified;
+
+  /// Bridge-assigned id for outgoing messages; a matching ack event flips
+  /// [delivered] (silent → ✓✓ delivered).
+  final String? msgId;
+  bool delivered;
 
   String get shortSender =>
       sender.length > 12 ? '${sender.substring(0, 12)}…' : sender;
@@ -150,6 +157,8 @@ class _ChatScreenState extends State<ChatScreen>
           time: time,
           mine: mine,
           verified: verified,
+          msgId: entry['msg_id'] as String?,
+          delivered: (entry['delivered'] as bool?) ?? false,
         ));
       });
     }
@@ -161,12 +170,35 @@ class _ChatScreenState extends State<ChatScreen>
       'mine': m.mine,
       'sender': m.sender,
       'verified': m.verified,
+      'delivered': m.delivered,
       'content': m.text,
       'ts': m.time.toIso8601String(),
+      if (m.msgId != null) 'msg_id': m.msgId,
     });
   }
 
   void _onIncoming(Np4Incoming msg) {
+    if (msg.isAck) {
+      // Delivery receipt: flip the matching outgoing bubble to delivered.
+      debugPrint('[np4] delivered ${msg.content} (acked by ${msg.sender})');
+      setState(() {
+        for (final m in _messages) {
+          if (m.msgId == msg.content && !m.delivered) {
+            m.delivered = true;
+            _history?.append({
+              'mine': true,
+              'sender': m.sender,
+              'verified': false,
+              'delivered': true,
+              'content': m.text,
+              'ts': m.time.toIso8601String(),
+              'msg_id': m.msgId,
+            });
+          }
+        }
+      });
+      return;
+    }
     // Debug builds log delivery so attached tooling (flutter run) can verify
     // end-to-end flow without touching the UI.
     debugPrint(
@@ -213,7 +245,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
     setState(() => _sending = true);
     try {
-      await widget.client.send(dest, text);
+      final msgId = await widget.client.send(dest, text);
       unawaited(HapticFeedback.mediumImpact());
       _sendFx.forward(from: 0);
       setState(() {
@@ -222,6 +254,7 @@ class _ChatScreenState extends State<ChatScreen>
           text: text,
           time: DateTime.now(),
           mine: true,
+          msgId: msgId,
         ));
         _record(_messages.last);
         _inputCtrl.clear();
@@ -382,6 +415,22 @@ class _ChatScreenState extends State<ChatScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (mine && m.delivered)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.done_all, size: 13, color: Np4Colors.accent),
+                    const SizedBox(width: 4),
+                    Text(
+                      '已送达',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: Np4Colors.accent.withValues(alpha: 0.9),
+                      ),
+                    ),
+                  ],
+                ),
               if (!mine) ...[
                 Row(
                   mainAxisSize: MainAxisSize.min,

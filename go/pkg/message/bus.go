@@ -8,12 +8,13 @@ import (
 	"sync"
 )
 
-// MessageType discriminates wire message kinds. Only TypeAsync is live
-// today (mix delivery); the rest are protocol placeholders for [v2].
+// MessageType discriminates wire message kinds. TypeAsync is chat text;
+// TypeAck is a delivery receipt routed to the ack callback, not the bus.
 type MessageType int
 
 const (
 	TypeAsync MessageType = iota
+	TypeAckMessage
 )
 
 type Message struct {

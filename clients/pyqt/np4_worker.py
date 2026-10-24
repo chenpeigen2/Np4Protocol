@@ -23,10 +23,14 @@ class BridgeWorker(QThread):
     node_ready = pyqtSignal(dict)  # {handle, peer_id, addrs}
     state_changed = pyqtSignal(str)
     message_received = pyqtSignal(str, str, bool)  # sender, content, verified
-    # dest, text, error ('' = success). Carrying the exact text through the
-    # worker lets the UI echo what was SENT, not whatever happens to be in
-    # the input box by the time the ack comes back.
-    send_done = pyqtSignal(str, str, str)
+    # dest, text, error ('' = success), msg_id (bridge-assigned; '' when
+    # not provided). Carrying the exact text through the worker lets the UI
+    # echo what was SENT, not whatever happens to be in the input box by
+    # the time the ack comes back.
+    send_done = pyqtSignal(str, str, str, str)
+    # Delivery receipt: the msg_id of a tracked send that the recipient
+    # verified and acked (see go/pkg/np4 ack path).
+    ack_received = pyqtSignal(str)
     peers_ready = pyqtSignal(list)  # [(peer_id, addrs)]
     failed = pyqtSignal(str)
 
@@ -67,18 +71,23 @@ class BridgeWorker(QThread):
                     kind, dest, text = None, "", ""
                 if kind == "send":
                     error = ""
+                    msg_id = ""
                     try:
                         content = base64.b64encode(text.encode()).decode()
-                        bridge.call(handle, "send", {"dest": dest, "content_b64": content})
+                        res = bridge.call(handle, "send", {"dest": dest, "content_b64": content})
+                        msg_id = res.get("msg_id", "")
                     except Np4BridgeError as e:
                         error = str(e)
                         print(f"[np4] send to {dest[:20]}… failed: {error}", flush=True)
-                    self.send_done.emit(dest, text, error)
+                    self.send_done.emit(dest, text, error, msg_id)
                 elif kind == "refresh_peers":
                     self._refresh_peers(bridge, handle)
                     last_peers = time.monotonic()
                 events, _dropped = bridge.poll(handle)
                 for ev in events:
+                    if ev.get("type") == "ack":
+                        self.ack_received.emit(ev.get("msg_id", ""))
+                        continue
                     sender, content, verified = decode_event(ev)
                     self.message_received.emit(sender, content, verified)
                 if time.monotonic() - last_peers > PEERS_REFRESH_S:

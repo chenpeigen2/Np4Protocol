@@ -104,6 +104,9 @@ const (
 	// above any human chat pace, tight enough that a flood is throttled.
 	defaultDirectRate  = 5.0
 	defaultDirectBurst = 20
+
+	// maxPendingAcks bounds the delivery-receipt pending table.
+	maxPendingAcks = 256
 )
 
 // ProductionDummyRate is the cover-traffic mean used by production
@@ -144,6 +147,14 @@ type Node struct {
 	contacts    map[peer.ID][]byte // verified-binding published ECDH keys, for sender verification
 	contactTick time.Duration      // negative = manual refresh only
 	dummyRate   float64            // cover-traffic mean cells/s; <=0 = off
+
+	// Delivery receipts (end-to-end ACK). pending holds msg_ids of sent
+	// text cells awaiting an ack; onAck fires when a VERIFIED ack names one.
+	ackMu    sync.Mutex
+	pending  map[string]peer.ID // msg_id hex → destination
+	pendOrd  []string           // insertion order for bounded eviction
+	onAckMu  sync.RWMutex
+	onAck    func(msgID []byte, from peer.ID)
 
 	evMu      sync.RWMutex
 	evHandler func(LinkEvent)
@@ -358,6 +369,7 @@ func NewNode(port int, opts ...Option) (*Node, error) {
 		seenMsg:     newSeenCache(seenMsgCapacity),
 		dispatchSem: make(chan struct{}, maxFlushConcurrency),
 		contacts:    make(map[peer.ID][]byte),
+		pending:     make(map[string]peer.ID),
 		ctx:         ctx,
 		cancel:      cancel,
 	}
@@ -526,48 +538,125 @@ func (n *Node) pickPath(ctx context.Context, dest peer.ID) ([]onion.Hop, error) 
 // callers who accept an unprotected send must say so explicitly via
 // SendDirect.
 func (n *Node) Send(dest peer.ID, content []byte) error {
+	_, err := n.SendTracked(dest, content)
+	return err
+}
+
+// SendTracked is Send with delivery tracking: the cell's msg_id is
+// registered so a later verified ACK (see OnAck) can mark it delivered.
+func (n *Node) SendTracked(dest peer.ID, content []byte) ([]byte, error) {
+	msgID, err := n.sendCell(dest, content, cell.TypeText)
+	if err != nil {
+		return nil, err
+	}
+	n.trackPending(msgID, dest)
+	return msgID, nil
+}
+
+// sendCell is the shared mix-send core for text and ack cells: pairwise
+// sender-auth tag (verifiable only by the destination), fixed-size cell,
+// onion path, entry-mix enqueue. Dummies build their own zero-tag cells
+// (dummy.go) and bypass this.
+func (n *Node) sendCell(dest peer.ID, content []byte, typ cell.Type) ([]byte, error) {
 	if n.pathSel == nil {
-		return errors.New("mix unavailable: node not in routed mode (missing WithBootstrap); use SendDirect explicitly if an unprotected send is acceptable")
+		return nil, errors.New("mix unavailable: node not in routed mode (missing WithBootstrap); use SendDirect explicitly if an unprotected send is acceptable")
 	}
 	path, err := n.pickPath(n.ctx, dest)
 	if err != nil {
 		if errors.Is(err, pathsel.ErrNotEnoughRelays) {
-			return fmt.Errorf("mix path selection failed: %w (reduce --hops or run more relays)", err)
+			return nil, fmt.Errorf("mix path selection failed: %w (reduce --hops or run more relays)", err)
 		}
-		return fmt.Errorf("mix path selection failed: %w", err)
+		return nil, fmt.Errorf("mix path selection failed: %w", err)
 	}
 	destPub, err := n.lookupDestPub(dest)
 	if err != nil {
-		return fmt.Errorf("destination keys: %w", err)
+		return nil, fmt.Errorf("destination keys: %w", err)
 	}
-	// Sender authentication: pairwise HMAC over msg_id‖content, verifiable
-	// only by the receiver (see package auth). Failure here is a hard error
-	// before the mix accepts anything — no silent unauthenticated fallback.
 	msgID, err := cell.NewMsgID()
 	if err != nil {
-		return fmt.Errorf("msg id: %w", err)
+		return nil, fmt.Errorf("msg id: %w", err)
 	}
 	tag, err := auth.Tag(n.identity, destPub, dest, msgID, content)
 	if err != nil {
-		return fmt.Errorf("sender auth: %w", err)
+		return nil, fmt.Errorf("sender auth: %w", err)
 	}
-	c, err := cell.Seal(msgID, cell.TypeText, tag, content)
+	c, err := cell.Seal(msgID, typ, tag, content)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	hops := append(path, onion.Hop{PeerID: dest, ECDHPub: destPub})
 	if len(hops)-1 > onion.MaxInitialTTL {
-		return fmt.Errorf("path too long: %d hops exceeds MaxInitialTTL %d", len(hops)-1, onion.MaxInitialTTL)
+		return nil, fmt.Errorf("path too long: %d hops exceeds MaxInitialTTL %d", len(hops)-1, onion.MaxInitialTTL)
 	}
 	on, err := onion.Build(hops, c)
 	if err != nil {
-		return fmt.Errorf("build onion: %w", err)
+		return nil, fmt.Errorf("build onion: %w", err)
 	}
 	pkt := &pendingPacket{firstHop: hops[0].PeerID, ttl: uint8(len(hops) - 1), onion: on}
 	if err := n.mix.Add(pkt); err != nil {
-		return fmt.Errorf("mix enqueue: %w", err)
+		return nil, fmt.Errorf("mix enqueue: %w", err)
 	}
-	return nil
+	return msgID, nil
+}
+
+// sendAck returns a delivery receipt for a verified text cell: a TypeAck
+// cell whose content is the original msg_id, routed back through the mix.
+// Best effort — a lost receipt just means the sender never sees ✓✓.
+func (n *Node) sendAck(to peer.ID, origMsgID []byte) {
+	if _, err := n.sendCell(to, origMsgID, cell.TypeAck); err != nil {
+		fmt.Fprintf(os.Stderr, "[np4] send ack: %v\n", err)
+	}
+}
+
+// OnAck registers the delivery-receipt handler: it fires exactly once per
+// tracked message, with the ACKING peer's identity (verified via its
+// sender-auth tag). Unregistered messages and forged acks never fire it.
+func (n *Node) OnAck(handler func(msgID []byte, from peer.ID)) {
+	n.onAckMu.Lock()
+	n.onAck = handler
+	n.onAckMu.Unlock()
+}
+
+// trackPending records a sent msg_id (bounded; oldest evicted at capacity —
+// a receipt for an evicted send simply never arrives, same as today).
+func (n *Node) trackPending(msgID []byte, dest peer.ID) {
+	key := string(msgID)
+	n.ackMu.Lock()
+	defer n.ackMu.Unlock()
+	if len(n.pending) >= maxPendingAcks {
+		oldest := n.pendOrd[0]
+		n.pendOrd = n.pendOrd[1:]
+		delete(n.pending, oldest)
+	}
+	n.pending[key] = dest
+	n.pendOrd = append(n.pendOrd, key)
+}
+
+// resolveAck consumes a verified receipt: fires only when the ack names a
+// pending msg_id whose destination is the acking peer.
+func (n *Node) resolveAck(msgID []byte, from peer.ID) {
+	key := string(msgID)
+	n.ackMu.Lock()
+	dest, ok := n.pending[key]
+	if ok {
+		delete(n.pending, key)
+		for i, k := range n.pendOrd {
+			if k == key {
+				n.pendOrd = append(n.pendOrd[:i], n.pendOrd[i+1:]...)
+				break
+			}
+		}
+	}
+	n.ackMu.Unlock()
+	if !ok || dest != from {
+		return // unknown or mismatched receipt: forged/late/foreign — ignore
+	}
+	n.onAckMu.RLock()
+	h := n.onAck
+	n.onAckMu.RUnlock()
+	if h != nil {
+		go h(append([]byte(nil), msgID...), from)
+	}
 }
 
 // SendDirect sends a single-hop message bypassing the mix. This is an
@@ -784,16 +873,31 @@ func (n *Node) handleOnionStream(s network.Stream) {
 		// reproduces the tag is attributed; otherwise the message is
 		// delivered as unverified (badge), never dropped — a friend not yet
 		// in the contact cache must still be able to reach us.
+		var sender peer.ID
 		senderID, verified := "anonymous", false
 		n.contactMu.RLock()
 		for pid, pub := range n.contacts {
 			ok, err := auth.Verify(n.identity, pub, pid, msgID, content, tag)
 			if err == nil && ok {
-				senderID, verified = pid.String(), true
+				sender, senderID, verified = pid, pid.String(), true
 				break
 			}
 		}
 		n.contactMu.RUnlock()
+
+		if typ == cell.TypeAck {
+			// Delivery receipt: content is the acked message's id. Resolve
+			// against the pending table and never echo to the chat bus.
+			if verified && len(content) == 16 {
+				n.resolveAck(content, sender)
+			}
+			return
+		}
+		// Delivery receipt for verified text (unverified senders have no
+		// return address we could attribute — and must not get one).
+		if verified {
+			go n.sendAck(sender, msgID)
+		}
 		n.bus.Send(&message.Message{
 			Type:     message.TypeAsync,
 			SenderID: senderID,

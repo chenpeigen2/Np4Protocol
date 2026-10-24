@@ -184,9 +184,26 @@ crypto/rand 抽取索引，不使用可种子化的 PRNG（批次排列是可观
 - **让位语义**：mix 队列满时 dummy 被拒、真实流量优先；注入路径上任何失败静默跳过，绝不产生用户可见错误。
 - **入口点默认**：np4cli / bridge（嵌入客户端）/ bootstrap 均默认 0.5；bridge 传负值显式关闭。
 
+## 端到端送达回执（ACK）**[impl]**
+
+"Send 成功 = 进入 mix" ≠ 送达。回执机制复用 sender-auth 反向通道：
+
+- **触发**：接收端成功**验证归属**的 TypeText 消息 → 异步回一条
+  `TypeAck` cell（内容 = 原消息 16B msg_id，携带接收端的 pairwise
+  tag），经 mix 正常路径路由回发送端。未验证消息**不回执**——匿名
+  发送者没有可归属的回程地址。
+- **匹配**：发送端维护有界挂起表（msg_id → 目标，256 条 FIFO）；
+  回执到达且验证通过且 `pending[id] == 回执者` 才触发 `OnAck`——
+  伪造/迟到/陌生回执一律忽略。
+- **无回声环**：TypeAck 不再触发回执（只有 TypeText 触发），且不进
+  聊天 bus。
+- **隐私**：msg_id 只存在于洋葱加密的 cell 内部，relay 全程不可见；
+  回执对网络就是一条普通 mix cell（定长、混洗、被 cover 流量掩护）。
+- **尽力语义**：回执丢失 = 发送端永远看不到 ✓✓（与消息本身同为
+  best-effort）；UI 语义：单发无标记，送达后气泡翻转为 "已送达 ✓✓"。
+
 ## [v2] Roadmap
 
-- 端到端 ACK（回程 onion 路径）。
 - 文件分块协议（>4061B 目前硬失败 ErrTooLarge）。
 - Presence / 离线存储转发。
 - 多 relay 部署下的 cover traffic relay 侧注入（当前仅入口侧；单 relay 拓扑下 relay 侧注入无增益）。

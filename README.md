@@ -83,7 +83,7 @@ BOOT=/ip4/127.0.0.1/tcp/4000/p2p/<bootstrap-peer-id>
 **关键语义**：
 
 - **离线即丢**：对方不在线或未完成 key 发布 → 消息丢失（无 presence、无离线队列，[v2] 规划）。
-- **无送达保证**：发送返回成功仅表示「已进入 mix」（交给第一跳 relay），端到端 ACK 是 [v2] 特性。
+- **送达回执（已验证消息）**：接收端验证归属后经 mix 回执，发送端气泡翻转为 "已送达 ✓✓"（bridge `ack` 事件 + `msg_id` 关联）；未验证/匿名消息无回执，丢失的回执 = 永远单钩（与消息同为 best-effort）。
 - **冷启动延迟**：新节点加入后 DHT 路由表需数秒预热；路径选择自动重试（最长 25s）。
 - 多 relay 部署（匿名性更好）：1 bootstrap + N 个 `np4cli relay`（N ≥ `--hops`，默认 3），详见 [go/cmd/np4cli/README.md](go/cmd/np4cli/README.md)。
 

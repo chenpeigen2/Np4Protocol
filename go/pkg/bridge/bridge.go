@@ -20,6 +20,7 @@ package bridge
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -126,6 +127,14 @@ func (m *Manager) Create(configJSON []byte) (map[string]any, error) {
 			"content_b64": base64.StdEncoding.EncodeToString(msg.Content),
 		})
 	})
+	node.OnAck(func(msgID []byte, from peer.ID) {
+		h.events.push(map[string]any{
+			"type":    "ack",
+			"msg_id":  hex.EncodeToString(msgID),
+			"sender":  from.String(),
+			"verified": true,
+		})
+	})
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -189,11 +198,15 @@ func (m *Manager) Call(id int64, req []byte) (map[string]any, error) {
 			return nil, fmt.Errorf("bridge: content_b64: %w", err)
 		}
 		if r.Method == "send" {
-			err = h.node.Send(dest, content)
-		} else {
-			err = h.node.SendDirect(dest, content)
+			msgID, sendErr := h.node.SendTracked(dest, content)
+			if sendErr != nil {
+				return nil, sendErr
+			}
+			// The UI correlates this id with the later ack event to render
+			// delivery state (single ✓ → double ✓✓).
+			return map[string]any{"msg_id": hex.EncodeToString(msgID)}, nil
 		}
-		if err != nil {
+		if err := h.node.SendDirect(dest, content); err != nil {
 			return nil, err
 		}
 		return map[string]any{}, nil

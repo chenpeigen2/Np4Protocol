@@ -412,6 +412,7 @@ class Bubble(QFrame):
         origin_label = QLabel(origin)
         origin_label.setObjectName("origin")
         origin_label.setStyleSheet(f"color: {origin_color}; font-size: 11px; font-weight: 600;")
+        self._origin_label = origin_label
         v.addWidget(origin_label)
 
         content = QLabel(text)
@@ -455,6 +456,8 @@ class ChatPage(QWidget):
         # same backup story). Plaintext by design: anyone with filesystem
         # access to the identity already owns this identity's messages.
         self._history_path = history_path
+        # msg_id → outgoing bubble's origin label, for delivery receipts.
+        self._tracked: dict[str, QLabel] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 14, 12)
         layout.setSpacing(10)
@@ -594,9 +597,11 @@ class ChatPage(QWidget):
             self.messages.setItemWidget(entry_item, holder)
         self.messages.scrollToBottom()
 
-    def _record(self, mine: bool, text: str, origin: str) -> None:
-        self._append_history(
-            {"mine": mine, "content": text, "origin": origin, "ts": _stamp()})
+    def _record(self, mine: bool, text: str, origin: str, msg_id: str = "") -> None:
+        entry = {"mine": mine, "content": text, "origin": origin, "ts": _stamp()}
+        if msg_id:
+            entry["msg_id"] = msg_id
+        self._append_history(entry)
 
     def add_incoming(self, sender: str, content: str, verified: bool) -> None:
         # Sender attribution comes from the pairwise auth tag: a verified
@@ -611,9 +616,41 @@ class ChatPage(QWidget):
         self._append_row(MessageRow(Bubble(content, origin, mine=False, origin_color=color), mine=False))
         self._record(mine=False, text=content, origin=origin)
 
-    def add_outgoing(self, text: str) -> None:
-        self._append_row(MessageRow(Bubble(text, "我 · 已进入匿名队列", mine=True, origin_color=MUTED), mine=True))
-        self._record(mine=True, text=text, origin="我 · 已进入匿名队列")
+    def add_outgoing(self, text: str, msg_id: str = "") -> None:
+        origin = "我 · 已进入匿名队列"
+        bubble = Bubble(text, origin, mine=True, origin_color=MUTED)
+        self._append_row(MessageRow(bubble, mine=True))
+        if msg_id:
+            self._tracked[msg_id] = bubble._origin_label
+        self._record(mine=True, text=text, origin=origin, msg_id=msg_id)
+
+    def mark_delivered(self, msg_id: str) -> None:
+        """A verified receipt arrived: flip the bubble to ✓✓ and persist."""
+        label = self._tracked.pop(msg_id, None)
+        if label is not None:
+            label.setText("我 · 已送达 ✓✓")
+            label.setStyleSheet(
+                f"color: {ACCENT}; font-size: 11px; font-weight: 600;")
+        self._mark_history_delivered(msg_id)
+
+    def _mark_history_delivered(self, msg_id: str) -> None:
+        if self._history_path is None or not msg_id:
+            return
+        try:
+            entries = []
+            for line in self._history_path.read_text(encoding="utf-8").splitlines():
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("msg_id") == msg_id:
+                    entry["delivered"] = True
+                entries.append(entry)
+            self._history_path.write_text(
+                "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n",
+                encoding="utf-8")
+        except OSError as e:
+            print(f"[np4] chat history mark failed: {e}", flush=True)
 
     def clear_input(self) -> None:
         self.input.clear()
@@ -652,6 +689,7 @@ class MainWindow(QMainWindow):
         self.controller.message_received.connect(self._on_message)
         self.controller.peers_updated.connect(self._on_peers)
         self.controller.send_completed.connect(self._on_send_completed)
+        self.controller.ack_received.connect(self._on_ack)
         self.controller.connect_failed.connect(self.connect_page.mark_failed)
         self.controller.delivery_risk.connect(self._on_delivery_risk)
 
@@ -688,15 +726,19 @@ class MainWindow(QMainWindow):
         if self._chat is not None:
             self._chat.set_peers(peers)
 
-    def _on_send_completed(self, text: str, error: str) -> None:
+    def _on_send_completed(self, text: str, error: str, msg_id: str) -> None:
         if self._chat is None:
             return
         if error:
             QMessageBox.warning(self, "发送失败", error)
             return
         # Echo exactly what was sent — never whatever is in the box now.
-        self._chat.add_outgoing(text)
+        self._chat.add_outgoing(text, msg_id=msg_id)
         self._chat.clear_input()
+
+    def _on_ack(self, msg_id: str) -> None:
+        if self._chat is not None and msg_id:
+            self._chat.mark_delivered(msg_id)
 
     def _on_delivery_risk(self, dest: str) -> None:
         QMessageBox.warning(

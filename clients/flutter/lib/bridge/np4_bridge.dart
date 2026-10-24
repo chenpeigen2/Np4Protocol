@@ -49,12 +49,18 @@ class Np4Incoming {
     required this.content,
     this.verified = false,
     this.timestamp,
+    this.isAck = false,
   });
 
   final String sender;
   final String content;
   final bool verified;
   final DateTime? timestamp;
+
+  /// Delivery receipt: content is the acked message's msg_id (hex) and
+  /// sender is the verifying recipient. Not rendered as a chat bubble —
+  /// the matching outgoing bubble flips to delivered (✓✓).
+  final bool isAck;
 
   @override
   String toString() => 'Np4Incoming($sender: $content, verified=$verified)';
@@ -174,10 +180,13 @@ class Np4Client {
 
   /// Mix send. Returns when the packet is accepted into the entry mix — NOT
   /// an end-to-end delivery guarantee (that needs the [v2] return-path ACK).
-  Future<void> send(String destPeerId, String text) {
+  /// Returns the message id (hex) the bridge assigned — the UI correlates
+  /// it with a later ack event to render delivery state.
+  Future<String?> send(String destPeerId, String text) async {
     final content = base64Encode(utf8.encode(text));
-    return _transport
+    final res = await _transport
         .call(_handle, 'send', {'dest': destPeerId, 'content_b64': content});
+    return res['msg_id'] as String?;
   }
 
   /// Blocks until everything queued in the entry mix has been dispatched to
